@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/envx.svg)](https://pkg.go.dev/github.com/cplieger/envx)
 [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/envx)](https://github.com/cplieger/envx/blob/main/go.mod)
 [![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/envx/badges/coverage.json)](https://github.com/cplieger/envx/actions/workflows/coverage.yml)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/PROJECT_ID/badge)](https://www.bestpractices.dev/projects/PROJECT_ID)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13604/badge)](https://www.bestpractices.dev/projects/13604)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/envx/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/envx)
 
 > Typed environment-variable configuration for containerized Go apps

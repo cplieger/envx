@@ -20,6 +20,12 @@ error for a missing mandatory variable, and `Secret` adds the Docker secrets
 convention (`KEY_FILE` pointing at a mounted file, read once, size-bounded,
 trimmed) on top.
 
+For apps configured by a YAML file rather than the environment, the
+`envx/yamlenv` subpackage expands allowlisted `${VAR}` references inside the
+parsed document's string values, so secrets stay in the environment while the
+file holds structure. It is the module's one non-stdlib corner (it needs
+`go.yaml.in/yaml/v3`); importing plain `envx` never links it.
+
 ## Install
 
 ```sh
@@ -44,6 +50,20 @@ if err != nil {
 apiKey, err := envx.Secret("APP_API_KEY")
 ```
 
+YAML config files reference environment variables with `${VAR}` and expand
+them after parsing, inside string values only:
+
+```go
+var doc yaml.Node
+if err := yaml.Unmarshal(data, &doc); err != nil { ... }
+allow := func(name string) bool { return strings.HasPrefix(name, "APP_") }
+if unresolved := yamlenv.Expand(&doc, allow); len(unresolved) > 0 {
+	slog.Warn("config references unset environment variables",
+		"vars", strings.Join(unresolved, ","))
+}
+if err := doc.Decode(&cfg); err != nil { ... }
+```
+
 ## API
 
 - `String(key, fallback string) string` — value or fallback; empty counts as unset.
@@ -53,6 +73,7 @@ apiKey, err := envx.Secret("APP_API_KEY")
 - `Require(key string) (string, error)` — value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
 - `Secret(key string) (string, error)` — `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
 - `MissingError{Key}` — the typed missing-variable error, detectable with `errors.As`.
+- `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)` (subpackage `envx/yamlenv`) — expand allowlisted `${VAR}` references inside a parsed YAML document's string scalar values, in place. Post-parse by design: an environment value containing YAML syntax (a quote, a newline, a `#`) lands as an inert string and can never change the document structure, unlike pre-parse text expansion. Braced `${VAR}` only; a non-allowlisted name, an unset variable, and an unbraced `$VAR` stay byte-for-byte literal; mapping keys and non-string scalars are untouched; expansion is a single pass. An empty-but-set variable substitutes (set-vs-unset is the contract here, not the getters' empty-equals-unset). Returns the allowlisted names that stayed unresolved, deduplicated in document order, for the caller to warn on.
 
 ## Behavior contract
 

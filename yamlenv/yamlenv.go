@@ -16,9 +16,10 @@
 // rewritten and an unset variable is never silently blanked. Expansion is a
 // single pass: a ${VAR} produced by an expanded value is not re-expanded.
 //
-// This package is a separate module subpackage on purpose: it is the one part
-// of envx that needs a YAML dependency, and importing plain envx never links
-// it.
+// This package is its own nested Go module on purpose: it is the one part of
+// envx that needs a YAML dependency, so the dependency lives in this module's
+// go.mod (the root envx module is zero-require), it is released independently
+// as yamlenv/vX.Y.Z tags, and importing plain envx never links it.
 package yamlenv
 
 import (

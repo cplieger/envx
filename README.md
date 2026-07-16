@@ -23,8 +23,11 @@ trimmed) on top.
 For apps configured by a YAML file rather than the environment, the
 `envx/yamlenv` subpackage expands allowlisted `${VAR}` references inside the
 parsed document's string values, so secrets stay in the environment while the
-file holds structure. It is the module's one non-stdlib corner (it needs
-`go.yaml.in/yaml/v3`); importing plain `envx` never links it.
+file holds structure. It is its own nested Go module: the YAML dependency
+(`go.yaml.in/yaml/v3`) lives in `yamlenv/go.mod`, the root `envx` module is
+zero-dependency, and yamlenv is versioned and released independently
+(`go get github.com/cplieger/envx/yamlenv@vX.Y.Z`; the backing git tags are
+named `yamlenv/vX.Y.Z`).
 
 ## Install
 
@@ -70,6 +73,7 @@ if err := doc.Decode(&cfg); err != nil { ... }
 - `Bool(key string, fallback bool) bool` — tolerant parse (`true/1/yes/on`, `false/0/no/off`, case-insensitive, trimmed); malformed → Warn + fallback.
 - `Int(key string, fallback int) int` — `strconv.Atoi` on the trimmed value; malformed → Warn + fallback.
 - `Duration(key string, fallback time.Duration) time.Duration` — `time.ParseDuration` syntax (`30s`, `6h`, `1h30m`); a bare unitless number is rejected (ambiguous) → Warn + fallback.
+- `IntStrict(key string) (int, bool, error)` / `DurationStrict(key string) (time.Duration, bool, error)` — the parse result owned by the caller: unset/empty → `(0, false, nil)`, malformed → `(0, false, err)` (the error names the key and wraps the parse error), valid → `(v, true, nil)`. Never logs. For the caller that must decide what a malformed value means — reject startup, apply bounds, keep an existing value — instead of accepting Warn + fallback.
 - `Require(key string) (string, error)` — value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
 - `Secret(key string) (string, error)` — `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
 - `MissingError{Key}` — the typed missing-variable error, detectable with `errors.As`.
@@ -78,7 +82,8 @@ if err := doc.Decode(&cfg); err != nil { ... }
 ## Behavior contract
 
 - **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters.
-- **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path.
+- **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log — the caller owns the decision.
+- **Parsing getters trim; `String` does not.** `Bool`, `Int`, `Duration`, and the strict variants parse the whitespace-trimmed value; `String` returns the raw value because whitespace can be meaningful in a free-form string (a whitespace-only value counts as set).
 - **No state, no goroutines, no import-time reads.** The process environment is read at call time only.
 
 ## Unsupported by design

@@ -14,6 +14,11 @@
 // Docker convention of an adjacent KEY_FILE variable pointing at a mounted
 // secret file, read once, size-bounded, and trimmed.
 //
+// For the caller that must own the malformed-value decision instead of
+// accepting warn-and-fallback — reject startup, apply bounds, keep an
+// existing value — IntStrict and DurationStrict return the parse result as
+// (value, ok, error) and never log.
+//
 // envx reads the process environment at call time; it holds no state, starts
 // no goroutines, and has no dependencies beyond the standard library.
 package envx

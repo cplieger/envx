@@ -95,3 +95,72 @@ func FuzzSecretPath(f *testing.F) {
 		_, _ = Secret("ENVX_FUZZ_SEC")
 	})
 }
+
+// FuzzIntStrict pins the strict/tolerant consistency contract: for any value,
+// IntStrict and Int agree on what parses — a valid strict result is exactly
+// the value Int returns, a strict error is exactly the case Int falls back
+// on, and the three-state return is internally consistent.
+func FuzzIntStrict(f *testing.F) {
+	silenceWarns(f)
+	for _, s := range []string{"", "0", "-1", "9999999999999999999999", "1.5", " 7 ", "seven", "\xff"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		if strings.ContainsRune(v, 0) {
+			t.Skip() // setenv rejects NUL
+		}
+		t.Setenv("ENVX_FUZZ_INTSTRICT", v)
+		n, ok, err := IntStrict("ENVX_FUZZ_INTSTRICT")
+		if ok && err != nil {
+			t.Fatalf("ok with non-nil err for %q", v)
+		}
+		if !ok && n != 0 {
+			t.Fatalf("!ok with non-zero value %d for %q", n, v)
+		}
+		const sentinel = -987654321
+		tolerant := Int("ENVX_FUZZ_INTSTRICT", sentinel)
+		switch {
+		case ok: // strict parsed: tolerant must return the same value
+			if tolerant != n {
+				t.Errorf("strict %d disagrees with tolerant %d for %q", n, tolerant, v)
+			}
+		default: // unset/empty or malformed: tolerant must have fallen back
+			if tolerant != sentinel && n == 0 && err == nil {
+				t.Errorf("strict says unset but tolerant parsed %d for %q", tolerant, v)
+			}
+			if err != nil && tolerant != sentinel {
+				t.Errorf("strict errored but tolerant parsed %d for %q", tolerant, v)
+			}
+		}
+	})
+}
+
+// FuzzDurationStrict pins the same strict/tolerant consistency contract for
+// durations.
+func FuzzDurationStrict(f *testing.F) {
+	silenceWarns(f)
+	for _, s := range []string{"", "30s", "-1h", "1h30m", "30", "s", "999999h", "\t5m\n"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		if strings.ContainsRune(v, 0) {
+			t.Skip() // setenv rejects NUL
+		}
+		t.Setenv("ENVX_FUZZ_DURSTRICT", v)
+		d, ok, err := DurationStrict("ENVX_FUZZ_DURSTRICT")
+		if ok && err != nil {
+			t.Fatalf("ok with non-nil err for %q", v)
+		}
+		if !ok && d != 0 {
+			t.Fatalf("!ok with non-zero value %v for %q", d, v)
+		}
+		const sentinel = -987654321 * time.Second
+		tolerant := Duration("ENVX_FUZZ_DURSTRICT", sentinel)
+		if ok && tolerant != d {
+			t.Errorf("strict %v disagrees with tolerant %v for %q", d, tolerant, v)
+		}
+		if err != nil && tolerant != sentinel {
+			t.Errorf("strict errored but tolerant parsed %v for %q", tolerant, v)
+		}
+	})
+}

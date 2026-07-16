@@ -14,6 +14,11 @@ import (
 // compose files and CI matrices routinely materialize `KEY=` for a knob the
 // operator left blank; distinguishing that from absence is almost never what
 // a config reader wants (use os.LookupEnv directly when it is).
+//
+// Unlike the parsing getters (Bool, Int, Duration), String does not trim the
+// value: whitespace can be meaningful in a free-form string, and the caller
+// knows whether its value is a path, a token, or a list. A whitespace-only
+// value therefore counts as set.
 func String(key, fallback string) string {
 	return cmp.Or(os.Getenv(key), fallback)
 }

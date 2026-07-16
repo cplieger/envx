@@ -83,5 +83,14 @@ func readSecretFile(path string) ([]byte, error) {
 	if info.Size() > maxSecretFileSize {
 		return nil, fmt.Errorf("secret file is %d bytes, exceeds %d byte limit", info.Size(), maxSecretFileSize)
 	}
-	return io.ReadAll(io.LimitReader(f, maxSecretFileSize+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxSecretFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	// Re-check after reading: a file that grows between Stat and read would
+	// otherwise pass the size gate and return silently truncated content.
+	if len(data) > maxSecretFileSize {
+		return nil, fmt.Errorf("secret file grew past the %d byte limit during read", maxSecretFileSize)
+	}
+	return data, nil
 }

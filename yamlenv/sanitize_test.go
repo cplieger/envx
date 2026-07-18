@@ -266,7 +266,7 @@ func TestSanitizeDecodeErrorExcerptCollisions(t *testing.T) {
 // leaks.
 func TestSanitizeDecodeErrorRealYAMLErrors(t *testing.T) {
 	t.Parallel()
-	const secret = "hunter2-expanded-secret"
+	const secret = "hunter2-expanded-secret" //gitleaks:allow (planted fixture; the test asserts it never survives sanitization)
 
 	type shape struct {
 		Flag bool   `yaml:"flag"`

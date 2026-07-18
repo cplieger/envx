@@ -16,6 +16,15 @@
 // rewritten and an unset variable is never silently blanked. Expansion is a
 // single pass: a ${VAR} produced by an expanded value is not re-expanded.
 //
+// Expansion creates one hazard of its own, which SanitizeDecodeError closes:
+// after secrets are substituted into the document, a failing decode of it
+// produces yaml.v3 errors that embed a backtick-quoted excerpt of the
+// offending scalar — possibly an expanded secret — and such errors are
+// typically logged at startup. SanitizeDecodeError rebuilds a decode or parse
+// error from its value-independent structure (line numbers, source tags,
+// destination types) and withholds anything it cannot prove value-free, so
+// the error stays safe to log while remaining actionable.
+//
 // This package is its own nested Go module on purpose: it is the one part of
 // envx that needs a YAML dependency, so the dependency lives in this module's
 // go.mod (the root envx module is zero-require), it is released independently
@@ -41,8 +50,12 @@ var refRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 //
 // It returns the allowlisted names still unresolved after expansion (a
 // reference the operator allowlisted but never set), deduplicated in
-// first-seen document order, so the caller can log one warning naming them. A
-// nil root or nil allow expands nothing and returns nil.
+// first-seen document order, so the caller can log one warning naming them.
+// Set-ness is re-checked before a name is reported: a ${VAR} introduced BY an
+// expanded value stays literal (single pass, no recursion) but names a SET
+// variable, and reporting it as "never set" would misname it — such a
+// reference is simply not reported. A nil root or nil allow expands nothing
+// and returns nil.
 func Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string) {
 	if root == nil || allow == nil {
 		return nil
@@ -95,15 +108,24 @@ func walkStringValues(node *yaml.Node, fn func(*yaml.Node)) {
 }
 
 // unresolvedRefs returns the allowlisted ${VAR} names still literal in s after
-// expansion (allowlisted but unset), deduplicated in order of appearance.
+// expansion AND unset in the environment, deduplicated in order of
+// appearance. The LookupEnv re-check keeps the "allowlisted but never set"
+// contract honest: after the single expansion pass, a remaining allowlisted
+// reference is either genuinely unset (reported) or was introduced by an
+// expanded value naming a set variable (kept literal by design, not
+// reported — it is not "never set").
 func unresolvedRefs(s string, allow func(string) bool) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, m := range refRe.FindAllStringSubmatch(s, -1) {
-		if allow(m[1]) && !seen[m[1]] {
-			seen[m[1]] = true
-			out = append(out, m[1])
+		if !allow(m[1]) || seen[m[1]] {
+			continue
 		}
+		if _, ok := os.LookupEnv(m[1]); ok {
+			continue
+		}
+		seen[m[1]] = true
+		out = append(out, m[1])
 	}
 	return out
 }

@@ -193,19 +193,35 @@ func TestExpandCannotChangeDocumentStructure(t *testing.T) {
 
 func TestExpandIsSinglePass(t *testing.T) {
 	// A ${VAR} arriving FROM an expanded value is not re-expanded (no
-	// recursion), and its surviving literal is reported like any other
-	// unresolved allowlisted reference.
-	t.Setenv("APP_OUTER", "${APP_INNER}")
-	t.Setenv("APP_INNER", "never-substituted")
-	root := parse(t, "v: ${APP_OUTER}\n")
-	unresolved := yamlenv.Expand(root, allowAppPrefix)
-	out := decodeMap(t, root)
-	if out["v"] != "${APP_INNER}" {
-		t.Errorf("v = %q, want the literal ${APP_INNER} (single-pass, no recursion)", out["v"])
-	}
-	if !slices.Equal(unresolved, []string{"APP_INNER"}) {
-		t.Errorf("unresolved = %v, want [APP_INNER]", unresolved)
-	}
+	// recursion). Whether its surviving literal is reported depends on
+	// set-ness: a SET variable is not "never set", so reporting it would
+	// misname it; an unset one is reported like any other unresolved
+	// allowlisted reference.
+	t.Run("introduced ref naming a set variable is kept literal, not reported", func(t *testing.T) {
+		t.Setenv("APP_OUTER", "${APP_INNER}")
+		t.Setenv("APP_INNER", "never-substituted")
+		root := parse(t, "v: ${APP_OUTER}\n")
+		unresolved := yamlenv.Expand(root, allowAppPrefix)
+		out := decodeMap(t, root)
+		if out["v"] != "${APP_INNER}" {
+			t.Errorf("v = %q, want the literal ${APP_INNER} (single-pass, no recursion)", out["v"])
+		}
+		if len(unresolved) != 0 {
+			t.Errorf("unresolved = %v, want none (APP_INNER is set, only unexpanded)", unresolved)
+		}
+	})
+	t.Run("introduced ref naming an unset variable is kept literal and reported", func(t *testing.T) {
+		t.Setenv("APP_OUTER", "${APP_INNER}")
+		root := parse(t, "v: ${APP_OUTER}\n")
+		unresolved := yamlenv.Expand(root, allowAppPrefix)
+		out := decodeMap(t, root)
+		if out["v"] != "${APP_INNER}" {
+			t.Errorf("v = %q, want the literal ${APP_INNER} (single-pass, no recursion)", out["v"])
+		}
+		if !slices.Equal(unresolved, []string{"APP_INNER"}) {
+			t.Errorf("unresolved = %v, want [APP_INNER]", unresolved)
+		}
+	})
 }
 
 func TestExpandAnchorsExpandOnce(t *testing.T) {

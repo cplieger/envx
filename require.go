@@ -66,6 +66,13 @@ func Secret(key string) (string, error) {
 // readSecretFile reads a secret file through one handle (no stat-then-open
 // TOCTOU window) and rejects a path containing traversal or a file over the
 // size bound.
+//
+// The ".." rejection is deliberately substring-broad: it also refuses a
+// legitimate filename that merely contains two consecutive dots (e.g.
+// /run/secrets/key..v2), beyond what the Clean-equality check guarantees.
+// Secret file paths are operator-written and fail loud with the path named,
+// so the stricter-than-necessary check is kept in preference to reasoning
+// about which ".."-bearing shapes are safe.
 func readSecretFile(path string) ([]byte, error) {
 	cleaned := filepath.Clean(path)
 	if cleaned != path || strings.Contains(path, "..") {

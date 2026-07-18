@@ -51,13 +51,12 @@ func Bool(key string, fallback bool) bool {
 // when the variable is unset or empty. A set-but-unparseable value logs one
 // Warn through slog's default logger and returns fallback.
 func Int(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
+	n, raw, ok, err := parseEnv(key, strconv.Atoi)
+	if err != nil {
+		warnMalformed(key, raw, "integer", fallback)
 		return fallback
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		warnMalformed(key, v, "integer", fallback)
+	if !ok {
 		return fallback
 	}
 	return n
@@ -72,16 +71,35 @@ func Int(key string, fallback int) int {
 // between seconds and minutes across tools, and time.ParseDuration rejecting
 // it (with the Warn line naming the key) is clearer than guessing.
 func Duration(key string, fallback time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
+	d, raw, ok, err := parseEnv(key, time.ParseDuration)
+	if err != nil {
+		warnMalformed(key, raw, "duration", fallback)
 		return fallback
 	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		warnMalformed(key, v, "duration", fallback)
+	if !ok {
 		return fallback
 	}
 	return d
+}
+
+// parseEnv is the single trim-and-parse core shared by the tolerant parsing
+// getters (Int, Duration) and their strict variants (IntStrict,
+// DurationStrict), so the two layers cannot drift apart mechanically: trim
+// surrounding whitespace, treat empty as unset (ok=false, no error), then
+// parse. It returns the trimmed raw value for the tolerant layer's Warn
+// diagnostic. Policy stays with the callers: warn-and-fallback in the
+// getters, error-as-data in the strict variants. (Bool keeps its own
+// vocabulary switch: it has no strict twin and no error-returning parse.)
+func parseEnv[T any](key string, parse func(string) (T, error)) (value T, raw string, ok bool, err error) {
+	raw = strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return value, "", false, nil
+	}
+	v, err := parse(raw)
+	if err != nil {
+		return value, raw, false, err
+	}
+	return v, raw, true, nil
 }
 
 // warnMalformed emits the single shared diagnostic for a set-but-unparseable

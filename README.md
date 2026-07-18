@@ -23,9 +23,13 @@ trimmed) on top.
 For apps configured by a YAML file rather than the environment, the
 `envx/yamlenv` subpackage expands allowlisted `${VAR}` references inside the
 parsed document's string values, so secrets stay in the environment while the
-file holds structure. It is its own nested Go module: the YAML dependency
-(`go.yaml.in/yaml/v3`) lives in `yamlenv/go.mod`, the root `envx` module is
-zero-dependency, and yamlenv is versioned and released independently
+file holds structure — and `SanitizeDecodeError` closes the hole expansion
+opens: a failing decode of the expanded document embeds a scalar excerpt that
+may now be a secret, so the sanitizer rebuilds the error from its
+value-independent structure before it reaches a startup log. It is its own
+nested Go module: the YAML dependency (`go.yaml.in/yaml/v3`) lives in
+`yamlenv/go.mod`, the root `envx` module is zero-dependency, and yamlenv is
+versioned and released independently
 (`go get github.com/cplieger/envx/yamlenv@vX.Y.Z`; the backing git tags are
 named `yamlenv/vX.Y.Z`).
 
@@ -64,7 +68,11 @@ if unresolved := yamlenv.Expand(&doc, allow); len(unresolved) > 0 {
 	slog.Warn("config references unset environment variables",
 		"vars", strings.Join(unresolved, ","))
 }
-if err := doc.Decode(&cfg); err != nil { ... }
+if err := doc.Decode(&cfg); err != nil {
+	// The raw decode error can embed an expanded secret in its scalar
+	// excerpt; sanitize it before it reaches the startup log.
+	return yamlenv.SanitizeDecodeError(err)
+}
 ```
 
 ## API
@@ -78,6 +86,7 @@ if err := doc.Decode(&cfg); err != nil { ... }
 - `Secret(key string) (string, error)` — `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
 - `MissingError{Key}` — the typed missing-variable error, detectable with `errors.As`.
 - `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)` (subpackage `envx/yamlenv`) — expand allowlisted `${VAR}` references inside a parsed YAML document's string scalar values, in place. Post-parse by design: an environment value containing YAML syntax (a quote, a newline, a `#`) lands as an inert string and can never change the document structure, unlike pre-parse text expansion. Braced `${VAR}` only; a non-allowlisted name, an unset variable, and an unbraced `$VAR` stay byte-for-byte literal; mapping keys and non-string scalars are untouched; expansion is a single pass. An empty-but-set variable substitutes (set-vs-unset is the contract here, not the getters' empty-equals-unset). Returns the allowlisted names that stayed unresolved, deduplicated in document order, for the caller to warn on.
+- `yamlenv.SanitizeDecodeError(err error, opts ...SanitizeOption) error` (subpackage `envx/yamlenv`) — rewrite a yaml.v3 parse or decode error so no fragment of a document value survives into the message. Expansion creates the risk this closes: a decode that fails AFTER `${VAR}` secrets were substituted embeds a backtick-quoted excerpt of the offending scalar, and such errors are typically logged at startup. Each `*yaml.TypeError` entry is rebuilt from its value-independent structure — a wrong-type entry keeps `line N: cannot unmarshal !!<tag>` and `into <type>` around a `<redacted>` placeholder, a duplicate-key entry keeps both line numbers and redacts the key, a strict-decode unknown-key entry redacts the key name unless `WithUnknownKeyEcho()` opts in to keeping it (the name is the diagnostic that fixes a typo; the Go type name is always dropped) — and any unrecognized shape falls back to a fixed withheld message keeping at most the `yaml: line N:` locator. Nil passes through; the returned error never wraps the original, so no unwrap path can reach the withheld text.
 
 ## Behavior contract
 

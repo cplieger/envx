@@ -2,9 +2,7 @@ package envx
 
 import (
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -23,15 +21,11 @@ import (
 // when the caller must decide what a malformed value means (reject startup,
 // apply bounds, keep an existing value).
 func IntStrict(key string) (value int, ok bool, err error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return 0, false, nil
-	}
-	n, err := strconv.Atoi(v)
+	n, _, ok, err := parseEnv(key, strconv.Atoi)
 	if err != nil {
 		return 0, false, fmt.Errorf("environment variable %s: %w", key, err)
 	}
-	return n, true, nil
+	return n, ok, nil
 }
 
 // DurationStrict returns the value of the environment variable key parsed
@@ -44,13 +38,9 @@ func IntStrict(key string) (value int, ok bool, err error) {
 // without a unit is rejected ("30" is ambiguous between seconds and minutes
 // across tools). Strict variants never log.
 func DurationStrict(key string) (value time.Duration, ok bool, err error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return 0, false, nil
-	}
-	d, err := time.ParseDuration(v)
+	d, _, ok, err := parseEnv(key, time.ParseDuration)
 	if err != nil {
 		return 0, false, fmt.Errorf("environment variable %s: %w", key, err)
 	}
-	return d, true, nil
+	return d, ok, nil
 }

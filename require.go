@@ -76,7 +76,7 @@ func Secret(key string) (string, error) {
 func readSecretFile(path string) ([]byte, error) {
 	cleaned := filepath.Clean(path)
 	if cleaned != path || strings.Contains(path, "..") {
-		return nil, fmt.Errorf("path traversal detected in secret file path: %s", path)
+		return nil, fmt.Errorf("secret file path rejected (must be clean and contain no \"..\"): %s", path)
 	}
 	f, err := os.Open(cleaned)
 	if err != nil {

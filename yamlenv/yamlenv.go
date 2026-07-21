@@ -25,6 +25,15 @@
 // destination types) and withholds anything it cannot prove value-free, so
 // the error stays safe to log while remaining actionable.
 //
+// Two strict-load checks round out safe config loading, both run on the raw
+// pre-expansion bytes (expansion rewrites string values only, so it can
+// change neither which keys exist nor how many documents there are):
+// CheckUnknownKeys fails loudly on a key the config type does not declare,
+// instead of silently ignoring it while the intended setting stays at its
+// default, and CheckSingleDocument rejects a file whose content below a
+// stray "---" separator would otherwise be silently dropped by
+// first-document-only parsing.
+//
 // This package is its own nested Go module on purpose: it is the one part of
 // envx that needs a YAML dependency, so the dependency lives in this module's
 // go.mod (the root envx module is zero-require), it is released independently

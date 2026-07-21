@@ -34,6 +34,11 @@
 // stray "---" separator would otherwise be silently dropped by
 // first-document-only parsing.
 //
+// Load composes all of the above — the strict checks, parse, expansion,
+// decode, and fail-closed sanitization — into one call that owns the safety
+// ordering, and is the recommended default path. The primitives stay
+// exported for callers whose policy the pipeline does not fit.
+//
 // This package is its own nested Go module on purpose: it is the one part of
 // envx that needs a YAML dependency, so the dependency lives in this module's
 // go.mod (the root envx module is zero-require), it is released independently
@@ -65,6 +70,11 @@ var refRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // variable, and reporting it as "never set" would misname it — such a
 // reference is simply not reported. A nil root or nil allow expands nothing
 // and returns nil.
+//
+// Expand rewrites node.Value only and leaves node.Style untouched, so the
+// expanded document is meant to be DECODED, not re-serialized: re-encoding it
+// can mis-render a substituted value containing YAML-significant characters
+// (a newline, a quote) whose original style no longer suits it.
 func Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string) {
 	if root == nil || allow == nil {
 		return nil

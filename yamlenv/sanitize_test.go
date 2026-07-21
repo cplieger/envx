@@ -257,13 +257,16 @@ func TestSanitizeDecodeErrorExcerptCollisions(t *testing.T) {
 	}
 }
 
-// TestSanitizeDecodeErrorRealYAMLErrors is the drift guard for the marker
-// assumptions: it sanitizes errors produced by the ACTUAL yaml.v3 in go.mod —
-// a wrong-type decode of an expanded secret, a duplicate mapping key, a
+// TestSanitizeDecodeErrorRealYAMLErrors is the module's vocabulary-drift
+// gate: it sanitizes errors produced by the ACTUAL yaml.v3 in go.mod — a
+// wrong-type decode of an expanded secret, a duplicate mapping key, a
 // strict-decode unknown key, and a syntax error — and asserts the planted
 // secret never survives while the value-independent structure does. If a
-// yaml.v3 upgrade reworded its errors, this test fails before any consumer
-// leaks.
+// yaml.v3 upgrade reworded its errors, this test fails the dependency-bump PR
+// before any consumer leaks or degrades to the withheld fallback. Keep it
+// even where it looks redundant beside the synthetic-entry tests above: they
+// pin the sanitizer against crafted entries, this one pins the marker
+// vocabulary against the real dependency.
 func TestSanitizeDecodeErrorRealYAMLErrors(t *testing.T) {
 	t.Parallel()
 	const secret = "hunter2-expanded-secret" //gitleaks:allow (planted fixture; the test asserts it never survives sanitization)

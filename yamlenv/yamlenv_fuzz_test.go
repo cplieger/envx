@@ -1,6 +1,7 @@
 package yamlenv_test
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 
@@ -53,6 +54,26 @@ func FuzzExpand(f *testing.F) {
 			if !validName.MatchString(name) {
 				t.Fatalf("unresolved name %q does not match the ${VAR} grammar", name)
 			}
+		}
+	})
+}
+
+// FuzzCheckSingleDocument pins the check's security contract for arbitrary
+// config-file bytes: it never panics, and its ONLY non-nil return is the
+// static ErrMultipleDocuments — never an error embedding input content — so
+// callers may log it without SanitizeDecodeError.
+func FuzzCheckSingleDocument(f *testing.F) {
+	f.Add([]byte("a: b\n"))
+	f.Add([]byte("a: b\n---\nc: d\n"))
+	f.Add([]byte("a: b\n---\n"))
+	f.Add([]byte("---\n---\n"))
+	f.Add([]byte(""))
+	f.Add([]byte("a: [\n"))
+	f.Add([]byte("\x00"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		err := yamlenv.CheckSingleDocument(data)
+		if err != nil && !errors.Is(err, yamlenv.ErrMultipleDocuments) {
+			t.Errorf("CheckSingleDocument(%q) = %v, want nil or the static ErrMultipleDocuments", data, err)
 		}
 	})
 }

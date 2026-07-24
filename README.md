@@ -10,8 +10,8 @@
 
 A tiny, standard-library-only reader for the way containerized apps are
 actually configured: environment variables with sensible defaults. Every
-getter takes a fallback and never fails — an unset or empty variable falls
-back silently, and a set-but-malformed value falls back with one `slog` Warn
+getter takes a fallback and never fails. An unset or empty variable falls
+back silently; a set-but-malformed value falls back with one `slog` Warn
 naming the variable, so a deployment typo shows up in the logs instead of
 silently changing behavior.
 
@@ -23,15 +23,13 @@ trimmed) on top.
 For apps configured by a YAML file rather than the environment, the
 `envx/yamlenv` subpackage expands allowlisted `${VAR}` references inside the
 parsed document's string values, so secrets stay in the environment while the
-file holds structure — and `SanitizeDecodeError` closes the hole expansion
-opens: a failing decode of the expanded document embeds a scalar excerpt that
-may now be a secret, so the sanitizer rebuilds the error from its
-value-independent structure before it reaches a startup log. It is its own
-nested Go module: the YAML dependency (`go.yaml.in/yaml/v3`) lives in
-`yamlenv/go.mod`, the root `envx` module is zero-dependency, and yamlenv is
-versioned and released independently
-(`go get github.com/cplieger/envx/yamlenv@vX.Y.Z`; the backing git tags are
-named `yamlenv/vX.Y.Z`).
+file holds structure. Expansion opens one hole: a failing decode of the
+expanded document can embed a secret in its error message.
+`SanitizeDecodeError` closes it, rebuilding the error so it is safe to log
+at startup. yamlenv is its own nested Go module,
+versioned and released independently; it alone carries the YAML dependency,
+so the root `envx` module stays zero-dependency. Install it separately:
+`go get github.com/cplieger/envx/yamlenv@vX.Y.Z`.
 
 ## Install
 
@@ -59,7 +57,7 @@ apiKey, err := envx.Secret("APP_API_KEY")
 
 YAML config files reference environment variables with `${VAR}` and expand
 them after parsing, inside string values only. `Load` is the one-call safe
-pipeline — single-document check, unknown-key strictness, parse, expansion,
+pipeline: single-document check, unknown-key strictness, parse, expansion,
 decode, and fail-closed error sanitization, in the right order:
 
 ```go
@@ -80,33 +78,37 @@ if err != nil {
 
 The pieces `Load` composes (`Expand`, `SanitizeDecodeError`,
 `CheckUnknownKeys`, `CheckSingleDocument`) stay exported for pipelines with
-different policy — a deliberately permissive partial probe, an app-owned
-error vocabulary — and are documented individually below.
+different policy and are documented individually below.
 
 ## API
 
-- `String(key, fallback string) string` — value or fallback; empty counts as unset.
-- `Bool(key string, fallback bool) bool` — tolerant parse (`true/1/yes/on`, `false/0/no/off`, case-insensitive, trimmed); malformed → Warn + fallback.
-- `Int(key string, fallback int) int` — `strconv.Atoi` on the trimmed value; malformed → Warn + fallback.
-- `Duration(key string, fallback time.Duration) time.Duration` — `time.ParseDuration` syntax (`30s`, `6h`, `1h30m`); a bare unitless number is rejected (ambiguous) → Warn + fallback.
-- `IntStrict(key string) (int, bool, error)` / `DurationStrict(key string) (time.Duration, bool, error)` — the parse result owned by the caller: unset/empty → `(0, false, nil)`, malformed → `(0, false, err)` (the error names the key and wraps the parse error), valid → `(v, true, nil)`. Never logs. For the caller that must decide what a malformed value means — reject startup, apply bounds, keep an existing value — instead of accepting Warn + fallback.
-- `Require(key string) (string, error)` — value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
-- `Secret(key string) (string, error)` — `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
-- `MissingError{Key}` — the typed missing-variable error, detectable with `errors.As`.
-- `yamlenv.Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error)` (subpackage `envx/yamlenv`) — the composed safe loading pipeline in one call: `CheckSingleDocument` and a filtered `CheckUnknownKeys` probe on the raw pre-expansion bytes, parse, `Expand` with the caller's allowlist, decode into `out` (a non-nil pointer, typically pre-populated with defaults; an empty document keeps them), and `SanitizeDecodeError` on every failure path, so no expanded secret can reach a startup log and no step can be forgotten or mis-ordered. Probe value-errors are ignored (a custom `UnmarshalYAML` rejecting a still-literal `${VAR}` cannot false-fail a valid config; the post-expansion decode owns value diagnostics). Options: `WithSanitizeOptions(...)` forwards sanitizer policy (e.g. `WithUnknownKeyEcho`); `WithErrorPassthrough(pred)` returns decode errors the caller claims as its own vocabulary unchanged (the safety argument is then the caller's).
-- `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)` (subpackage `envx/yamlenv`) — expand allowlisted `${VAR}` references inside a parsed YAML document's string scalar values, in place. Post-parse by design: an environment value containing YAML syntax (a quote, a newline, a `#`) lands as an inert string and can never change the document structure, unlike pre-parse text expansion. Braced `${VAR}` only; a non-allowlisted name, an unset variable, and an unbraced `$VAR` stay byte-for-byte literal; mapping keys and non-string scalars are untouched; expansion is a single pass. An empty-but-set variable substitutes (set-vs-unset is the contract here, not the getters' empty-equals-unset). Returns the allowlisted names that stayed unresolved, deduplicated in document order, for the caller to warn on.
-- `yamlenv.SanitizeDecodeError(err error, opts ...SanitizeOption) error` (subpackage `envx/yamlenv`) — rewrite a yaml.v3 parse or decode error so no fragment of a document value survives into the message. Expansion creates the risk this closes: a decode that fails AFTER `${VAR}` secrets were substituted embeds a backtick-quoted excerpt of the offending scalar, and such errors are typically logged at startup. Each `*yaml.TypeError` entry is rebuilt from its value-independent structure — a wrong-type entry keeps `line N: cannot unmarshal !!<tag>` and `into <type>` around a `<redacted>` placeholder, a duplicate-key entry keeps both line numbers and redacts the key, a strict-decode unknown-key entry redacts the key name unless `WithUnknownKeyEcho()` opts in to keeping it (the name is the diagnostic that fixes a typo; the Go type name is always dropped) — and any unrecognized shape falls back to a fixed withheld message keeping at most the `yaml: line N:` locator. Nil passes through; the returned error never wraps the original, so no unwrap path can reach the withheld text.
-- `yamlenv.CheckUnknownKeys(data []byte, probe any) error` (subpackage `envx/yamlenv`) — fail loudly on a key the config type does not declare: a `KnownFields(true)` re-decode of the raw document into `probe` (a pointer to a fresh throwaway value of the caller's config struct), so a misspelled or misplaced key errors instead of being silently ignored while its intended setting stays at the default. Run it on the pre-expansion bytes: expansion rewrites string values only, so it cannot change which keys exist, and line numbers point at the file the operator wrote. An empty document passes. The returned error is yaml.v3's and may embed document content — log it through `SanitizeDecodeError`, which recognizes the unknown-key shape.
-- `yamlenv.CheckSingleDocument(data []byte) error` (subpackage `envx/yamlenv`) — reject input carrying more than one YAML document: single-document pipelines (`yaml.Unmarshal`, one `Decode`) consume only the first, so everything below a stray `---` separator would be silently dropped. A first document that fails to parse returns nil (the caller's parse steps own that diagnostic); the only non-nil return is the static `ErrMultipleDocuments`, which embeds no input content and is safe to log unsanitized.
+- `String(key, fallback string) string`: value or fallback; empty counts as unset.
+- `Bool(key string, fallback bool) bool`: tolerant parse (`true/1/yes/on`, `false/0/no/off`, case-insensitive, trimmed); malformed → Warn + fallback.
+- `Int(key string, fallback int) int`: `strconv.Atoi` on the trimmed value; malformed → Warn + fallback.
+- `Duration(key string, fallback time.Duration) time.Duration`: `time.ParseDuration` syntax (`30s`, `6h`, `1h30m`); a bare unitless number is rejected (ambiguous) → Warn + fallback.
+- `IntStrict(key string) (int, bool, error)` / `DurationStrict(key string) (time.Duration, bool, error)`: the parse result owned by the caller instead of Warn + fallback: unset/empty → `(0, false, nil)`, malformed → `(0, false, err)` naming the key, valid → `(v, true, nil)`. Never logs.
+- `Require(key string) (string, error)`: value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
+- `Secret(key string) (string, error)`: `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
+- `MissingError{Key}`: the typed missing-variable error, detectable with `errors.As`.
+- `yamlenv.Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error)`: the composed safe loading pipeline in one call: single-document check, unknown-key strictness, parse, `Expand` with the caller's allowlist, decode into `out` (a non-nil pointer pre-populated with defaults), and sanitized errors on every failure path. Options: `WithSanitizeOptions(...)` forwards sanitizer policy; `WithErrorPassthrough(pred)` returns caller-owned decode errors unchanged.
+- `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)`: in-place expansion of allowlisted, set `${VAR}` references inside a parsed document's string scalar values; post-parse, so an environment value can never change the document structure; everything else stays byte-for-byte literal. Returns the allowlisted names left unresolved, for the caller to warn on.
+- `yamlenv.SanitizeDecodeError(err error, opts ...SanitizeOption) error`: rebuild a yaml.v3 parse or decode error from its value-independent structure (line numbers, source tags, destination types) so no fragment of a document value, possibly an expanded secret, survives into the message; `WithUnknownKeyEcho()` opts into keeping the unknown-key name. The returned error never wraps the original.
+- `yamlenv.CheckUnknownKeys(data []byte, probe any) error`: fail loudly on a key the config type does not declare, via a `KnownFields(true)` re-decode of the raw pre-expansion document into `probe`. The returned error may embed document content; log it through `SanitizeDecodeError`.
+- `yamlenv.CheckSingleDocument(data []byte) error`: reject input carrying more than one YAML document, so nothing below a stray `---` separator is silently dropped. The only non-nil return is the static `ErrMultipleDocuments`, safe to log unsanitized.
+
+Full contracts (trim rules, the expansion grammar, the sanitizer's entry
+shapes, the probe's value-error filtering) are in the package documentation:
+[envx](https://pkg.go.dev/github.com/cplieger/envx) and
+[yamlenv](https://pkg.go.dev/github.com/cplieger/envx/yamlenv).
 
 ## Behavior contract
 
 - **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters.
-- **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log — the caller owns the decision.
+- **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log; the caller owns the decision.
 - **Parsing getters trim; `String` does not.** `Bool`, `Int`, `Duration`, and the strict variants parse the whitespace-trimmed value; `String` returns the raw value because whitespace can be meaningful in a free-form string (a whitespace-only value counts as set).
 - **No state, no goroutines, no import-time reads.** The process environment is read at call time only.
 
-## Unsupported by design
+## Unsupported by Design
 
 Deliberate non-goals, not TODOs:
 
@@ -117,6 +119,11 @@ Deliberate non-goals, not TODOs:
 | Float / slice / map getters | No consumer parses these from the environment. Added only when a real app needs one. |
 | Prefix namespacing (`WithPrefix("APP_")`) | Key names stay greppable verbatim; a prefix helper saves a few characters and costs discoverability. |
 | Panic-on-missing (`MustX`) | `Require` returns an error so startup can report every missing variable at once instead of dying on the first. |
+
+## Contributing
+
+Issues and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+conventions and how to run the checks locally.
 
 ## Disclaimer
 
@@ -131,4 +138,4 @@ supervises implementation, and makes all final decisions.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0. See [LICENSE](LICENSE).

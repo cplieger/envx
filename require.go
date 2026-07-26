@@ -41,26 +41,21 @@ const maxSecretFileSize = 1 << 20
 // Secret returns a required secret from the environment, supporting the
 // Docker secrets convention: when KEY_FILE is set, the secret is read from
 // that file (size-bounded, whitespace-trimmed); otherwise the value of KEY
-// itself is returned. An unset or empty result is a *MissingError.
+// itself is returned. An unset or empty result is a *MissingError, and a
+// configured file whose trimmed content is empty is ErrBlankSecretFile.
 //
 // The KEY_FILE indirection keeps the secret value out of `docker inspect`
 // output and compose files; the file path must be clean (no ".." traversal),
 // and the read uses a single handle so the size check and the read cannot
 // race. The secret value itself never appears in an error or a log line;
 // errors carry the key name and file path only.
+//
+// Use SecretWithSource when the caller needs to know WHICH channel supplied the
+// value — for example to warn that a KEY it also set was ignored in favour of
+// KEY_FILE. Secret delegates to it, so the two cannot drift.
 func Secret(key string) (string, error) {
-	if path := os.Getenv(key + "_FILE"); path != "" {
-		data, err := readSecretFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read secret file for %s: %w", key, err)
-		}
-		v := strings.TrimSpace(string(data))
-		if v == "" {
-			return "", fmt.Errorf("secret file for %s is empty: %s", key, path)
-		}
-		return v, nil
-	}
-	return Require(key)
+	v, _, err := SecretWithSource(key)
+	return v, err
 }
 
 // readSecretFile reads a secret file through one handle (no stat-then-open

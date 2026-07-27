@@ -25,7 +25,11 @@ three ideas:
   variable pointing at a mounted file wins over `KEY`; the read is
   single-handle (no stat-then-open race), size-bounded (1 MB), traversal-
   rejected, and whitespace-trimmed. The secret value never appears in an
-  error or log line.
+  error or log line. `SecretWithSource` additionally reports which channel
+  answered, and `IsBlankSecretFilePath` reports a `KEY_FILE` that is present
+  but blank — a pointer, unlike a value, is broken rather than absent when it
+  is empty, and resolution is deliberately left unchanged so no existing
+  deployment's behavior moves.
 
 Anything beyond that (struct-tag loading, `.env` files, float/slice/map
 getters, prefix namespacing, panic-on-missing variants) is out of scope by

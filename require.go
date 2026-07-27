@@ -39,10 +39,11 @@ func Require(key string) (string, error) {
 const maxSecretFileSize = 1 << 20
 
 // Secret returns a required secret from the environment, supporting the
-// Docker secrets convention: when KEY_FILE is set, the secret is read from
-// that file (size-bounded, whitespace-trimmed); otherwise the value of KEY
-// itself is returned. An unset or empty result is a *MissingError, and a
-// configured file whose trimmed content is empty is ErrBlankSecretFile.
+// Docker secrets convention: when KEY_FILE is set to a non-empty value, the
+// secret is read from that file (size-bounded, whitespace-trimmed);
+// otherwise the value of KEY itself is returned. An unset or empty result is
+// a *MissingError, and a configured file whose trimmed content is empty is
+// ErrBlankSecretFile.
 //
 // The KEY_FILE indirection keeps the secret value out of `docker inspect`
 // output and compose files; the file path must be clean (no ".." traversal),
@@ -52,7 +53,9 @@ const maxSecretFileSize = 1 << 20
 //
 // Use SecretWithSource when the caller needs to know WHICH channel supplied the
 // value — for example to warn that a KEY it also set was ignored in favour of
-// KEY_FILE. Secret delegates to it, so the two cannot drift.
+// KEY_FILE. Secret delegates to it, so the two cannot drift. Use
+// IsBlankSecretFilePath when a KEY_FILE that is present but blank must be
+// refused instead of read as absent.
 func Secret(key string) (string, error) {
 	v, _, err := SecretWithSource(key)
 	return v, err

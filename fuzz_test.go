@@ -81,18 +81,25 @@ func FuzzDuration(f *testing.F) {
 }
 
 // FuzzSecretPath asserts the KEY_FILE path guard never panics and never opens
-// a traversal path.
+// a traversal path, and pins the blank-pointer invariant: whenever
+// IsBlankSecretFilePath reports the pointer blank, the file channel can never have
+// delivered a secret — a blank KEY_FILE either resolves elsewhere or fails.
 func FuzzSecretPath(f *testing.F) {
 	silenceWarns(f)
-	for _, s := range []string{"", "/run/secrets/token", "../etc/passwd", "a/../../b", "/dev/null"} {
+	for _, s := range []string{"", "/run/secrets/token", "../etc/passwd", "a/../../b", "/dev/null", " ", "   ", "\t\n"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, p string) {
 		if p == "" || strings.ContainsRune(p, 0) {
-			t.Skip() // setenv rejects NUL
+			// setenv rejects NUL; the empty pointer selects no file channel at all
+			// and is pinned by the table tests instead.
+			t.Skip()
 		}
 		t.Setenv("ENVX_FUZZ_SEC_FILE", p)
-		_, _ = Secret("ENVX_FUZZ_SEC")
+		v, src, err := SecretWithSource("ENVX_FUZZ_SEC")
+		if IsBlankSecretFilePath("ENVX_FUZZ_SEC") && src == SourceFile && err == nil {
+			t.Errorf("blank pointer %q delivered a secret from the file channel (value length %d)", p, len(v))
+		}
 	})
 }
 

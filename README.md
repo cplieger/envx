@@ -53,6 +53,13 @@ if err != nil {
 
 // Docker secrets: reads APP_API_KEY_FILE when set, else APP_API_KEY.
 apiKey, err := envx.Secret("APP_API_KEY")
+
+// A present-but-empty APP_API_KEY_FILE names no file, so it resolves as if
+// unset. Refuse it when a broken secret mount must not fall back:
+if envx.IsBlankSecretFilePath("APP_API_KEY") {
+	slog.Error("startup", "error", "APP_API_KEY_FILE is set but empty")
+	os.Exit(1)
+}
 ```
 
 YAML config files reference environment variables with `${VAR}` and expand
@@ -89,6 +96,9 @@ different policy and are documented individually below.
 - `IntStrict(key string) (int, bool, error)` / `DurationStrict(key string) (time.Duration, bool, error)`: the parse result owned by the caller instead of Warn + fallback: unset/empty → `(0, false, nil)`, malformed → `(0, false, err)` naming the key, valid → `(v, true, nil)`. Never logs.
 - `Require(key string) (string, error)`: value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
 - `Secret(key string) (string, error)`: `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, whitespace-trimmed) wins over `KEY`. The secret value never appears in an error or log line.
+- `SecretWithSource(key string) (string, SecretSource, error)`: `Secret` plus the channel that supplied the value (`SourceFile`, `SourceEnv`, `SourceNone`), reported on the error paths too, so a caller can warn that a `KEY` it also set was ignored in favour of `KEY_FILE`.
+- `IsBlankSecretFilePath(key string) bool`: reports a `KEY_FILE` that is present but blank (empty or whitespace only) and therefore names no file. Resolution is unchanged — it still falls through as if unset — but the caller can refuse it, which matters when the secret is optional and the fallthrough is fail-open.
+- `ErrBlankSecretFile`: the sentinel for a `KEY_FILE` naming a readable file whose trimmed content is empty, so a caller's allow-empty policy can cover both delivery channels identically.
 - `MissingError{Key}`: the typed missing-variable error, detectable with `errors.As`.
 - `yamlenv.Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error)`: the composed safe loading pipeline in one call: single-document check, unknown-key strictness, parse, `Expand` with the caller's allowlist, decode into `out` (a non-nil pointer pre-populated with defaults), and sanitized errors on every failure path. Options: `WithSanitizeOptions(...)` forwards sanitizer policy; `WithErrorPassthrough(pred)` returns caller-owned decode errors unchanged.
 - `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)`: in-place expansion of allowlisted, set `${VAR}` references inside a parsed document's string scalar values; post-parse, so an environment value can never change the document structure; everything else stays byte-for-byte literal. Returns the allowlisted names left unresolved, for the caller to warn on.
@@ -103,7 +113,7 @@ shapes, the probe's value-error filtering) are in the package documentation:
 
 ## Behavior contract
 
-- **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters.
+- **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters. The one distinction the package answers itself is a blank `KEY_FILE` (`IsBlankSecretFilePath`): that variable holds a pointer, not a value, so its blankness is a statement about this package's own channel selection rather than about the app's value semantics.
 - **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log; the caller owns the decision.
 - **Parsing getters trim; `String` does not.** `Bool`, `Int`, `Duration`, and the strict variants parse the whitespace-trimmed value; `String` returns the raw value because whitespace can be meaningful in a free-form string (a whitespace-only value counts as set).
 - **No state, no goroutines, no import-time reads.** The process environment is read at call time only.

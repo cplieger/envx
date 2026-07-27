@@ -160,3 +160,145 @@ func TestSecret_delegates_to_SecretWithSource(t *testing.T) {
 		})
 	}
 }
+
+// TestIsBlankSecretFilePath pins the state the resolver cannot express: a KEY_FILE the
+// operator DID write, holding no path. Present-but-empty is the shape compose
+// interpolation of an undefined variable produces, and it is the one the resolver reads
+// as absence.
+func TestIsBlankSecretFilePath(t *testing.T) {
+	for name, tc := range map[string]struct {
+		set   bool // whether KEY_FILE is present at all
+		value string
+		want  bool
+	}{
+		"unset is not blank":                       {set: false, want: false},
+		"present and empty is blank":               {set: true, value: "", want: true},
+		"single space is blank":                    {set: true, value: " ", want: true},
+		"spaces are blank":                         {set: true, value: "   ", want: true},
+		"tab and newline are blank":                {set: true, value: "\t\n", want: true},
+		"non-breaking space is blank":              {set: true, value: "\u00a0", want: true},
+		"absolute path is not blank":               {set: true, value: "/run/secrets/token", want: false},
+		"relative path is not blank":               {set: true, value: "secrets/token", want: false},
+		"padded path is not blank":                 {set: true, value: " /run/secrets/token ", want: false},
+		"a path this package rejects is not blank": {set: true, value: "../etc/passwd", want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("ENVX_BLANK_FILE", tc.value)
+			} else {
+				// t.Setenv restores the previous state, including absence.
+				t.Setenv("ENVX_BLANK_FILE", "placeholder")
+				if err := os.Unsetenv("ENVX_BLANK_FILE"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := IsBlankSecretFilePath("ENVX_BLANK"); got != tc.want {
+				t.Errorf("IsBlankSecretFilePath(%q set=%v) = %v, want %v", tc.value, tc.set, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsBlankSecretFilePath_reports_without_changing_resolution is the compatibility
+// contract, and the reason this is a predicate rather than a new source or a new
+// sentinel: every consumer that already resolves a secret with a blank KEY_FILE in its
+// environment must see exactly what it saw before. A deployment where `KEY_FILE=` falls
+// through to KEY keeps starting; only a caller that ASKS learns the pointer was blank.
+func TestIsBlankSecretFilePath_reports_without_changing_resolution(t *testing.T) {
+	t.Run("empty file path still resolves through the env channel", func(t *testing.T) {
+		t.Setenv("ENVX_SWS", "from-env")
+		t.Setenv("ENVX_SWS_FILE", "")
+
+		v, src, err := SecretWithSource("ENVX_SWS")
+		if v != "from-env" || src != SourceEnv || err != nil {
+			t.Errorf("SecretWithSource = (%q, %q, %v), want (%q, %q, nil): precedence must be unchanged",
+				v, src, err, "from-env", SourceEnv)
+		}
+		if !IsBlankSecretFilePath("ENVX_SWS") {
+			t.Error("IsBlankSecretFilePath = false, want true: the operator did set an empty _FILE")
+		}
+	})
+
+	t.Run("empty file path with no env value is still MissingError", func(t *testing.T) {
+		t.Setenv("ENVX_SWS", "")
+		t.Setenv("ENVX_SWS_FILE", "")
+
+		_, src, err := SecretWithSource("ENVX_SWS")
+		var missing *MissingError
+		if !errors.As(err, &missing) || src != SourceNone {
+			t.Errorf("SecretWithSource = (%q, %v), want (%q, *MissingError)", src, err, SourceNone)
+		}
+		if !IsBlankSecretFilePath("ENVX_SWS") {
+			t.Error("IsBlankSecretFilePath = false, want true")
+		}
+	})
+
+	t.Run("whitespace-only file path is still opened and still fails", func(t *testing.T) {
+		t.Setenv("ENVX_SWS", "from-env")
+		t.Setenv("ENVX_SWS_FILE", "   ")
+
+		v, src, err := SecretWithSource("ENVX_SWS")
+		if err == nil {
+			t.Fatalf("SecretWithSource = %q, nil; want the unchanged failure for an unopenable path", v)
+		}
+		if v != "" || src != SourceFile {
+			t.Errorf("SecretWithSource = (%q, %q), want (%q, %q): a set _FILE is never a fallback to the env value",
+				v, src, "", SourceFile)
+		}
+		if !IsBlankSecretFilePath("ENVX_SWS") {
+			t.Error("IsBlankSecretFilePath = false, want true: a whitespace-only path names no file either")
+		}
+	})
+
+	t.Run("valid path is not blank and still wins", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "secret")
+		if err := os.WriteFile(p, []byte("from-file\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ENVX_SWS", "from-env")
+		t.Setenv("ENVX_SWS_FILE", p)
+
+		v, src, err := SecretWithSource("ENVX_SWS")
+		if v != "from-file" || src != SourceFile || err != nil {
+			t.Errorf("SecretWithSource = (%q, %q, %v), want (%q, %q, nil)", v, src, err, "from-file", SourceFile)
+		}
+		if IsBlankSecretFilePath("ENVX_SWS") {
+			t.Error("IsBlankSecretFilePath = true, want false for a real path")
+		}
+	})
+
+	t.Run("blank file CONTENT keeps its own sentinel and is not a blank path", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "blank")
+		if err := os.WriteFile(p, []byte("  \n\t"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ENVX_SWS", "")
+		t.Setenv("ENVX_SWS_FILE", p)
+
+		_, src, err := SecretWithSource("ENVX_SWS")
+		if !errors.Is(err, ErrBlankSecretFile) || src != SourceFile {
+			t.Errorf("SecretWithSource = (%q, %v), want (%q, ErrBlankSecretFile)", src, err, SourceFile)
+		}
+		// The two blank conditions are distinct: this pointer names a real file, and a
+		// caller routing blank CONTENT through an allow-empty opt-out must not have that
+		// opt-out silently widened to cover a broken mount.
+		if IsBlankSecretFilePath("ENVX_SWS") {
+			t.Error("IsBlankSecretFilePath = true for a path naming a blank file; only the PATH's blankness is its subject")
+		}
+	})
+}
+
+// TestIsBlankSecretFilePath_builds_the_companion_key pins that the predicate and the
+// resolver agree on WHICH variable they read: the key itself being blank must not be
+// mistaken for the pointer being blank.
+func TestIsBlankSecretFilePath_builds_the_companion_key(t *testing.T) {
+	t.Setenv("ENVX_SWS", "   ")
+	t.Setenv("ENVX_SWS_FILE", "/run/secrets/token")
+
+	if IsBlankSecretFilePath("ENVX_SWS") {
+		t.Error("IsBlankSecretFilePath reads KEY, not KEY_FILE")
+	}
+	if got := secretFileKey("ENVX_SWS"); got != "ENVX_SWS_FILE" {
+		t.Errorf("secretFileKey = %q, want %q", got, "ENVX_SWS_FILE")
+	}
+}

@@ -12,7 +12,10 @@
 // Two calls handle the values an app cannot default: Require returns an error
 // for a missing mandatory variable, and Secret additionally supports the
 // Docker convention of an adjacent KEY_FILE variable pointing at a mounted
-// secret file, read once, size-bounded, and trimmed.
+// secret file, read once, size-bounded, and trimmed. A KEY_FILE that is
+// present but blank names no file, so it resolves as if unset;
+// IsBlankSecretFilePath reports that state for the caller who must refuse a
+// broken secret pointer rather than fall back to the plain variable.
 //
 // For the caller that must own the malformed-value decision instead of
 // accepting warn-and-fallback — reject startup, apply bounds, keep an

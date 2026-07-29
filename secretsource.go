@@ -8,7 +8,12 @@ import (
 )
 
 // ErrBlankSecretFile is returned by Secret and SecretWithSource when KEY_FILE names a
-// readable file whose trimmed content is empty.
+// readable file whose content is blank — empty, or whitespace only.
+//
+// Blankness is the one judgement made on the whitespace-trimmed content: a file holding
+// only spaces or newlines is a broken secret mount, not a secret. The value a readable
+// file DOES carry is returned with at most a trailing line ending removed, so the two
+// operations do not share a rule (see trimTrailingLineEnding).
 //
 // It is a distinct sentinel because a caller often has a policy for a blank secret that
 // differs from its policy for an unusable one. cert-converter is the motivating case: it
@@ -111,17 +116,50 @@ func SecretWithSource(key string) (value string, source SecretSource, err error)
 		if readErr != nil {
 			return "", SourceFile, fmt.Errorf("read secret file for %s: %w", key, readErr)
 		}
-		v := strings.TrimSpace(string(data))
-		if v == "" {
+		content := string(data)
+		// Two different operations on the same bytes, deliberately not folded:
+		// blankness is judged on the whitespace-trimmed content (so a file
+		// holding only spaces, tabs or newlines is still diagnosed as a broken
+		// mount), while the value RETURNED keeps every byte the operator wrote
+		// except one trailing line ending.
+		if strings.TrimSpace(content) == "" {
 			// The path is named because a blank secret file cannot be diagnosed
 			// without it; the (absent) VALUE is what must never be logged.
 			return "", SourceFile, fmt.Errorf("%w for %s: %s", ErrBlankSecretFile, key, path)
 		}
-		return v, SourceFile, nil
+		return trimTrailingLineEnding(content), SourceFile, nil
 	}
 	v, reqErr := Require(key)
 	if reqErr != nil {
 		return "", SourceNone, reqErr
 	}
 	return v, SourceEnv, nil
+}
+
+// trimTrailingLineEnding removes at most ONE trailing line ending ("\r\n" or
+// "\n") and nothing else.
+//
+// The file channel used to return strings.TrimSpace of the file's content,
+// which made it the only getter in this package that REWRITES a value: the env
+// channel hands back os.Getenv verbatim, so a credential with a leading space,
+// a trailing tab or an interior NBSP resolved to two different secrets
+// depending on which channel delivered it. A consumer that validates a
+// credential verbatim — refusing edge whitespace so it never authenticates with
+// a value different from the configured one — was silently handed a rewritten
+// value through the file channel, with nothing in the error path to reveal it.
+//
+// A single trailing line ending is still removed because it is not part of the
+// value: an editor, a heredoc and `kubectl create secret --from-file` all append
+// one, and a file is the one place a value cannot be stored without that
+// ambiguity. Everything else — interior whitespace, edge spaces and tabs, a
+// SECOND trailing newline, a lone leading newline — is content and is returned
+// as-is. A value whose real last byte is a newline cannot be expressed through
+// this channel; that is the accepted cost of the convention, and it is why the
+// trim is bounded to one line ending rather than all of them. A lone trailing
+// "\r" is not a line ending any tool writes here, so it is content too.
+func trimTrailingLineEnding(s string) string {
+	if !strings.HasSuffix(s, "\n") {
+		return s
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
 }

@@ -15,7 +15,7 @@ import (
 func TestSecretWithSource_reports_the_channel(t *testing.T) {
 	t.Run("file wins over env and is reported as such", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "secret")
-		if err := os.WriteFile(p, []byte("  from-file\n"), 0o600); err != nil {
+		if err := os.WriteFile(p, []byte("from-file\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("ENVX_SWS", "from-env")
@@ -26,7 +26,7 @@ func TestSecretWithSource_reports_the_channel(t *testing.T) {
 			t.Fatalf("SecretWithSource = %v, want nil", err)
 		}
 		if v != "from-file" {
-			t.Errorf("value = %q, want %q (trimmed file content, file wins)", v, "from-file")
+			t.Errorf("value = %q, want %q (file content minus its line ending, file wins)", v, "from-file")
 		}
 		if src != SourceFile {
 			t.Errorf("source = %q, want %q", src, SourceFile)
@@ -61,7 +61,92 @@ func TestSecretWithSource_reports_the_channel(t *testing.T) {
 	})
 }
 
-// TestSecretWithSource_blank_file_is_a_distinct_sentinel pins the reason
+// TestSecretWithSource_file_channel_returns_the_value_as_written pins the asymmetry this
+// package used to carry: the env channel returns os.Getenv verbatim while the file
+// channel ran strings.TrimSpace, so one credential resolved to two different secrets
+// depending on how it was delivered. A consumer that validates a credential verbatim was
+// handed a silently rewritten value. Only a single trailing line ending — the artifact of
+// storing a value in a file at all — is removed now.
+func TestSecretWithSource_file_channel_returns_the_value_as_written(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		want    string
+	}{
+		"one trailing newline is removed":         {content: "s3cret\n", want: "s3cret"},
+		"a CRLF line ending is removed":           {content: "s3cret\r\n", want: "s3cret"},
+		"no line ending is fine":                  {content: "s3cret", want: "s3cret"},
+		"only ONE line ending is removed":         {content: "s3cret\n\n", want: "s3cret\n"},
+		"a bare CR is not a line ending here":     {content: "s3cret\r", want: "s3cret\r"},
+		"trailing spaces are content":             {content: "s3cret  ", want: "s3cret  "},
+		"leading spaces are content":              {content: "  s3cret", want: "  s3cret"},
+		"edge spaces survive the line-ending cut": {content: " s3cret \n", want: " s3cret "},
+		"a trailing tab is content":               {content: "s3cret\t", want: "s3cret\t"},
+		"a leading newline is content":            {content: "\ns3cret\n", want: "\ns3cret"},
+		"a non-breaking space is content":         {content: "s3cret\u00a0\n", want: "s3cret\u00a0"},
+		"interior whitespace is untouched":        {content: "two words\n", want: "two words"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "secret")
+			if err := os.WriteFile(p, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ENVX_SWS", "")
+			t.Setenv("ENVX_SWS_FILE", p)
+
+			v, src, err := SecretWithSource("ENVX_SWS")
+			if err != nil {
+				t.Fatalf("SecretWithSource(%q) = %v, want nil", tc.content, err)
+			}
+			if v != tc.want {
+				t.Errorf("SecretWithSource(%q) = %q, want %q", tc.content, v, tc.want)
+			}
+			if src != SourceFile {
+				t.Errorf("source = %q, want %q", src, SourceFile)
+			}
+		})
+	}
+}
+
+// TestSecretWithSource_channels_agree_on_the_value is the property the trim rule exists
+// to protect: for a secret an operator could write into either channel, both channels
+// must resolve to the SAME string. A caller that validates the credential (rejecting edge
+// whitespace, say) must not get a different verdict per delivery mechanism.
+func TestSecretWithSource_channels_agree_on_the_value(t *testing.T) {
+	for _, secret := range []string{
+		"s3cret",
+		" leading",
+		"trailing ",
+		"\ttab-edged\t",
+		"two words",
+		"with\u00a0nbsp",
+		"https://discord.com/api/webhooks/1/tok en",
+	} {
+		t.Run(secret, func(t *testing.T) {
+			// The file channel: the secret plus the line ending a file inevitably gains.
+			p := filepath.Join(t.TempDir(), "secret")
+			if err := os.WriteFile(p, []byte(secret+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ENVX_SWS", secret)
+			t.Setenv("ENVX_SWS_FILE", p)
+			fromFile, src, err := SecretWithSource("ENVX_SWS")
+			if err != nil || src != SourceFile {
+				t.Fatalf("file channel = (%q, %q, %v), want (_, %q, nil)", fromFile, src, err, SourceFile)
+			}
+
+			t.Setenv("ENVX_SWS_FILE", "")
+			fromEnv, src, err := SecretWithSource("ENVX_SWS")
+			if err != nil || src != SourceEnv {
+				t.Fatalf("env channel = (%q, %q, %v), want (_, %q, nil)", fromEnv, src, err, SourceEnv)
+			}
+
+			if fromFile != fromEnv {
+				t.Errorf("file channel = %q, env channel = %q; the same secret must resolve identically", fromFile, fromEnv)
+			}
+		})
+	}
+}
+
 // ErrBlankSecretFile exists: a caller with an explicit opt-in for running without a
 // secret has to apply that policy identically to both channels, and it can only do so if
 // "the file you mounted is blank" is distinguishable from "the file is unusable" WITHOUT

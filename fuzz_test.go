@@ -43,6 +43,42 @@ func FuzzBool(f *testing.F) {
 	})
 }
 
+// FuzzBoolStrict pins the strict/tolerant consistency contract for booleans,
+// which is the shared-parser guarantee stated as an invariant: whatever
+// BoolStrict accepts, Bool returns identically regardless of its fallback, and
+// whatever BoolStrict rejects, Bool falls back on.
+func FuzzBoolStrict(f *testing.F) {
+	silenceWarns(f)
+	for _, s := range []string{"", "true", "FALSE", " on ", "off", "2", "ture", "t", "🚀", "TRUE\n"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		if strings.ContainsRune(v, 0) {
+			t.Skip() // setenv rejects NUL
+		}
+		t.Setenv("ENVX_FUZZ_BOOLSTRICT", v)
+		b, ok, err := BoolStrict("ENVX_FUZZ_BOOLSTRICT")
+		if ok && err != nil {
+			t.Fatalf("ok with non-nil err for %q", v)
+		}
+		if !ok && b {
+			t.Fatalf("!ok with true value for %q", v)
+		}
+		tolerantTrue := Bool("ENVX_FUZZ_BOOLSTRICT", true)
+		tolerantFalse := Bool("ENVX_FUZZ_BOOLSTRICT", false)
+		if ok { // strict parsed: the value decides, both fallbacks agree with it
+			if tolerantTrue != b || tolerantFalse != b {
+				t.Errorf("strict %v disagrees with tolerant (%v,%v) for %q", b, tolerantTrue, tolerantFalse, v)
+			}
+			return
+		}
+		// unset/empty or malformed: each tolerant call returned its fallback
+		if !tolerantTrue || tolerantFalse {
+			t.Errorf("tolerant did not fall back (%v,%v) while strict declined %q", tolerantTrue, tolerantFalse, v)
+		}
+	})
+}
+
 // FuzzInt asserts Int never panics and unparseable input returns the fallback.
 func FuzzInt(f *testing.F) {
 	silenceWarns(f)

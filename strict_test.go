@@ -8,6 +8,183 @@ import (
 	"time"
 )
 
+func TestBoolStrict(t *testing.T) {
+	tests := []struct {
+		name    string
+		set     bool
+		value   string
+		want    bool
+		wantOK  bool
+		wantErr bool
+	}{
+		{name: "unset", want: false, wantOK: false},
+		{name: "empty", set: true, value: "", want: false, wantOK: false},
+		{name: "whitespace-only", set: true, value: "   ", want: false, wantOK: false},
+		{name: "tab and newline only", set: true, value: "\t\n", want: false, wantOK: false},
+		// Every accepted true spelling.
+		{name: "true", set: true, value: "true", want: true, wantOK: true},
+		{name: "1", set: true, value: "1", want: true, wantOK: true},
+		{name: "yes", set: true, value: "yes", want: true, wantOK: true},
+		{name: "on", set: true, value: "on", want: true, wantOK: true},
+		// Every accepted false spelling.
+		{name: "false", set: true, value: "false", want: false, wantOK: true},
+		{name: "0", set: true, value: "0", want: false, wantOK: true},
+		{name: "no", set: true, value: "no", want: false, wantOK: true},
+		{name: "off", set: true, value: "off", want: false, wantOK: true},
+		// Case variations.
+		{name: "TRUE", set: true, value: "TRUE", want: true, wantOK: true},
+		{name: "True", set: true, value: "True", want: true, wantOK: true},
+		{name: "tRuE", set: true, value: "tRuE", want: true, wantOK: true},
+		{name: "YES", set: true, value: "YES", want: true, wantOK: true},
+		{name: "On", set: true, value: "On", want: true, wantOK: true},
+		{name: "FALSE", set: true, value: "FALSE", want: false, wantOK: true},
+		{name: "No", set: true, value: "No", want: false, wantOK: true},
+		{name: "OFF", set: true, value: "OFF", want: false, wantOK: true},
+		// Surrounding whitespace ignored.
+		{name: "padded true", set: true, value: " true ", want: true, wantOK: true},
+		{name: "tab-padded yes", set: true, value: "\tyes\t", want: true, wantOK: true},
+		{name: "newline-padded off", set: true, value: " off\n", want: false, wantOK: true},
+		{name: "padded case-mixed", set: true, value: "  True  ", want: true, wantOK: true},
+		// Malformed: the error is returned, never logged (asserted below).
+		{name: "typo", set: true, value: "ture", wantErr: true},
+		{name: "out-of-range numeric", set: true, value: "2", wantErr: true},
+		{name: "negative numeric", set: true, value: "-1", wantErr: true},
+		{name: "strconv-only spelling t", set: true, value: "t", wantErr: true},
+		{name: "strconv-only spelling f", set: true, value: "f", wantErr: true},
+		{name: "word", set: true, value: "enabled", wantErr: true},
+		{name: "inner whitespace", set: true, value: "t rue", wantErr: true},
+		{name: "non-ascii", set: true, value: "🚀", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := captureWarns(t)
+			if tt.set {
+				t.Setenv("ENVX_TEST_BOOLSTRICT", tt.value)
+			}
+			got, ok, err := BoolStrict("ENVX_TEST_BOOLSTRICT")
+			if got != tt.want || ok != tt.wantOK || (err != nil) != tt.wantErr {
+				t.Errorf("BoolStrict() = (%v, %v, %v), want (%v, %v, err=%v)",
+					got, ok, err, tt.want, tt.wantOK, tt.wantErr)
+			}
+			if ok && err != nil {
+				t.Errorf("ok and err are not mutually exclusive: (%v, %v)", ok, err)
+			}
+			if len(rec.msgs) != 0 {
+				t.Errorf("strict getter logged: %v", rec.msgs)
+			}
+		})
+	}
+}
+
+// TestBoolStrictNeverLogs is the reason BoolStrict exists: the caller owns the
+// diagnostic because the value may be sensitive, so the malformed path — the
+// one path where the tolerant Bool logs, and logs the raw value — must emit
+// nothing at all through the default logger, at any level.
+func TestBoolStrictNeverLogs(t *testing.T) {
+	const secretish = "hunter2-not-a-boolean"
+	for _, value := range []string{secretish, "", "   ", "true", "off"} {
+		t.Run("value="+value, func(t *testing.T) {
+			rec := captureWarns(t)
+			t.Setenv("ENVX_TEST_BOOLSTRICT_QUIET", value)
+
+			_, _, err := BoolStrict("ENVX_TEST_BOOLSTRICT_QUIET")
+
+			if len(rec.msgs) != 0 {
+				t.Errorf("BoolStrict logged %d record(s): %v", len(rec.msgs), rec.msgs)
+			}
+			if len(rec.keys) != 0 {
+				t.Errorf("BoolStrict logged key attrs: %v", rec.keys)
+			}
+			// The malformed value must not survive into the error either: the
+			// caller is expected to log that error.
+			if err != nil && strings.Contains(err.Error(), value) {
+				t.Errorf("BoolStrict error echoes the value: %v", err)
+			}
+		})
+	}
+}
+
+// TestBoolStrictErrorContract pins what the caller can rely on: the error
+// names the key (so the caller's own diagnostic can too) and states the
+// accepted vocabulary, and the tolerant Bool would have warned about the very
+// same value.
+func TestBoolStrictErrorContract(t *testing.T) {
+	rec := captureWarns(t)
+	t.Setenv("ENVX_TEST_BOOLSTRICT_ERR", "ture")
+
+	_, ok, err := BoolStrict("ENVX_TEST_BOOLSTRICT_ERR")
+	if ok || err == nil {
+		t.Fatalf("BoolStrict() = (_, %v, %v), want (_, false, error)", ok, err)
+	}
+	if !strings.Contains(err.Error(), "ENVX_TEST_BOOLSTRICT_ERR") {
+		t.Errorf("BoolStrict error does not name the key: %v", err)
+	}
+	for _, spelling := range []string{"true", "1", "yes", "on", "false", "0", "no", "off"} {
+		if !strings.Contains(err.Error(), spelling) {
+			t.Errorf("BoolStrict error does not name accepted spelling %q: %v", spelling, err)
+		}
+	}
+	if len(rec.msgs) != 0 {
+		t.Errorf("strict getter logged: %v", rec.msgs)
+	}
+}
+
+// TestBoolAndBoolStrictAgree pins the shared-parser guarantee: for every
+// well-formed input the two getters decide identically, so the grammar cannot
+// drift between the tolerant and strict layers. Bool is called with both
+// fallbacks: agreement must come from the value, not from a fallback that
+// happens to match.
+func TestBoolAndBoolStrictAgree(t *testing.T) {
+	wellFormed := []string{
+		"true", "1", "yes", "on", "false", "0", "no", "off",
+		"TRUE", "True", "tRuE", "YES", "On", "FALSE", "No", "OFF",
+		" true ", "\tyes\t", " off\n", "  False  ", " 1 ", " 0 ",
+	}
+	for _, value := range wellFormed {
+		t.Run(strconv.Quote(value), func(t *testing.T) {
+			captureWarns(t) // Bool must not warn on a well-formed value
+			t.Setenv("ENVX_TEST_BOOL_AGREE", value)
+
+			strict, ok, err := BoolStrict("ENVX_TEST_BOOL_AGREE")
+			if !ok || err != nil {
+				t.Fatalf("BoolStrict(%q) = (_, %v, %v), want ok", value, ok, err)
+			}
+			if got := Bool("ENVX_TEST_BOOL_AGREE", true); got != strict {
+				t.Errorf("Bool(fallback=true) = %v, BoolStrict = %v for %q", got, strict, value)
+			}
+			if got := Bool("ENVX_TEST_BOOL_AGREE", false); got != strict {
+				t.Errorf("Bool(fallback=false) = %v, BoolStrict = %v for %q", got, strict, value)
+			}
+		})
+	}
+}
+
+// TestBoolAndBoolStrictAgreeOnMalformed is the other half of the shared
+// parser: what one layer rejects, the other rejects too — Bool falls back
+// (with its Warn), BoolStrict errors.
+func TestBoolAndBoolStrictAgreeOnMalformed(t *testing.T) {
+	for _, value := range []string{"ture", "2", "-1", "t", "f", "enabled", "🚀"} {
+		t.Run(value, func(t *testing.T) {
+			rec := captureWarns(t)
+			t.Setenv("ENVX_TEST_BOOL_AGREE_BAD", value)
+
+			if _, ok, err := BoolStrict("ENVX_TEST_BOOL_AGREE_BAD"); ok || err == nil {
+				t.Fatalf("BoolStrict(%q) = (_, %v, %v), want an error", value, ok, err)
+			}
+			if got := Bool("ENVX_TEST_BOOL_AGREE_BAD", true); !got {
+				t.Errorf("Bool did not fall back to true for %q", value)
+			}
+			if got := Bool("ENVX_TEST_BOOL_AGREE_BAD", false); got {
+				t.Errorf("Bool did not fall back to false for %q", value)
+			}
+			if rec.count("malformed") != 2 {
+				t.Errorf("Bool warns = %d, want 2 (one per call); BoolStrict must add none: %v",
+					rec.count("malformed"), rec.msgs)
+			}
+		})
+	}
+}
+
 func TestIntStrict(t *testing.T) {
 	tests := []struct {
 		name    string

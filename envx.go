@@ -2,6 +2,7 @@ package envx
 
 import (
 	"cmp"
+	"errors"
 	"log/slog"
 	"os"
 	"strconv"
@@ -31,20 +32,19 @@ func String(key, fallback string) string {
 // ignored. Any other value logs one Warn through slog's default logger and
 // returns fallback, so a typo ("ture") is visible in the logs instead of
 // silently flipping a flag.
+//
+// The Warn line carries the raw value. Use BoolStrict for a key whose value
+// may be sensitive, or when the caller owns its own diagnostics.
 func Bool(key string, fallback bool) bool {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
+	b, raw, ok, err := parseEnv(key, parseBool)
+	if err != nil {
+		warnMalformed(key, raw, "boolean", fallback)
 		return fallback
 	}
-	switch strings.ToLower(v) {
-	case "true", "1", "yes", "on":
-		return true
-	case "false", "0", "no", "off":
-		return false
-	default:
-		warnMalformed(key, v, "boolean", fallback)
+	if !ok {
 		return fallback
 	}
+	return b
 }
 
 // Int returns the integer value of the environment variable key, or fallback
@@ -83,13 +83,12 @@ func Duration(key string, fallback time.Duration) time.Duration {
 }
 
 // parseEnv is the single trim-and-parse core shared by the tolerant parsing
-// getters (Int, Duration) and their strict variants (IntStrict,
-// DurationStrict), so the two layers cannot drift apart mechanically: trim
-// surrounding whitespace, treat empty as unset (ok=false, no error), then
-// parse. It returns the trimmed raw value for the tolerant layer's Warn
-// diagnostic. Policy stays with the callers: warn-and-fallback in the
-// getters, error-as-data in the strict variants. (Bool keeps its own
-// vocabulary switch: it has no strict twin and no error-returning parse.)
+// getters (Bool, Int, Duration) and their strict variants (BoolStrict,
+// IntStrict, DurationStrict), so the two layers cannot drift apart
+// mechanically: trim surrounding whitespace, treat empty as unset (ok=false,
+// no error), then parse. It returns the trimmed raw value for the tolerant
+// layer's Warn diagnostic. Policy stays with the callers: warn-and-fallback in
+// the getters, error-as-data in the strict variants.
 func parseEnv[T any](key string, parse func(string) (T, error)) (value T, raw string, ok bool, err error) {
 	raw = strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -100,6 +99,29 @@ func parseEnv[T any](key string, parse func(string) (T, error)) (value T, raw st
 		return value, raw, false, err
 	}
 	return v, raw, true, nil
+}
+
+// errInvalidBool is the value-free parse failure for a set-but-unrecognized
+// boolean spelling. It names the accepted vocabulary but never the offending
+// value: BoolStrict hands this to a caller that may log it, and the value may
+// be a secret an operator wired to the key by mistake. The tolerant Bool adds
+// the raw value itself, in the Warn line it owns.
+var errInvalidBool = errors.New("invalid boolean (want true/1/yes/on or false/0/no/off)")
+
+// parseBool is the single home of the package's boolean vocabulary, shared by
+// the tolerant Bool and the strict BoolStrict through parseEnv so the two
+// cannot drift apart. It receives the already-trimmed value (parseEnv trims
+// and treats empty as unset), so it only decides the spelling: true/1/yes/on
+// and false/0/no/off, case-insensitive.
+func parseBool(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, errInvalidBool
+	}
 }
 
 // warnMalformed emits the single shared diagnostic for a set-but-unparseable

@@ -6,7 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/cplieger/pathinside"
 )
 
 // MissingError reports a required environment variable that is unset or
@@ -59,7 +60,7 @@ const maxSecretFileSize = 1 << 20
 // which of those it wants to say.
 var (
 	// ErrSecretFilePathRejected means KEY_FILE named a path this package
-	// refuses to open: not already clean, or containing "..".
+	// refuses to open: not already clean, or containing a ".." path component.
 	ErrSecretFilePathRejected = errors.New("envx: secret file path rejected")
 	// ErrSecretFileTooLarge means the file was already over maxSecretFileSize
 	// when it was opened.
@@ -153,20 +154,29 @@ func Secret(key string) (string, error) {
 // Every failure it returns is classified: ErrSecretFilePathRejected,
 // ErrSecretFileTooLarge, ErrSecretFileGrew or ErrSecretFileUnreadable, so a
 // caller can name the class without matching these messages or handling the
-// path. The messages themselves are unchanged.
+// path.
 //
-// The ".." rejection is deliberately substring-broad: it also refuses a
-// legitimate filename that merely contains two consecutive dots (e.g.
-// /run/secrets/key..v2), beyond what the Clean-equality check guarantees.
-// Secret file paths are operator-written and fail loud with the path named,
-// so the stricter-than-necessary check is kept in preference to reasoning
-// about which ".."-bearing shapes are safe.
+// The path rule is pathinside's hygiene pair, judging the path AS WRITTEN
+// rather than where it resolves: IsCanonical refuses every spelling a later
+// normalization would silently rewrite (a trailing or doubled separator, a "."
+// component, a traversal buried mid-path), and HasDotDot refuses a ".." path
+// COMPONENT. The pair deliberately does NOT refuse two dots INSIDE a name:
+// /run/secrets/key..v2, or a file literally named "...", is an ordinary file,
+// and the substring test this rule used to run refused it for nothing — a
+// component that is not exactly ".." traverses nowhere. Every path that could
+// reach a file other than the one it names is still refused: the traversal
+// spellings ("..", "../token", /run/secrets/../../etc/shadow) and every
+// unclean spelling, whether or not it carries a traversal.
+//
+// The canonicality half means the string that is validated and the string that
+// is opened are the same bytes: a path that passes IS its own Clean form, so
+// the filepath.Clean below is a proven no-op, kept only for the taint checkers
+// that recognize it as this open's sanitizer.
 func readSecretFile(path string) ([]byte, error) {
-	cleaned := filepath.Clean(path)
-	if cleaned != path || strings.Contains(path, "..") {
-		return nil, fmt.Errorf("%w (must be clean and contain no \"..\"): %s", ErrSecretFilePathRejected, path)
+	if !pathinside.IsCanonical(path) || pathinside.HasDotDot(path) {
+		return nil, fmt.Errorf("%w (must be clean and contain no \"..\" path component): %s", ErrSecretFilePathRejected, path)
 	}
-	f, err := os.Open(cleaned)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, unreadableSecretFile(err)
 	}

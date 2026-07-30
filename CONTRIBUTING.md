@@ -6,9 +6,10 @@ letting it grow into a configuration framework.
 
 ## Getters, not a framework
 
-`envx` is a standard-library-only package (no runtime or test dependencies)
-that reads typed values from the process environment. The whole surface is
-three ideas:
+`envx` is a package of typed getters over the process environment, with one
+dependency: `github.com/cplieger/pathinside` (itself standard-library-only)
+supplies the `KEY_FILE` path rule. Nothing is needed for the tests. The whole
+surface is three ideas:
 
 - **`String` / `Bool` / `Int` / `Duration`**: fallback-taking getters that
   never fail: unset or empty falls back silently; set-but-malformed falls
@@ -37,7 +38,7 @@ design; the README's "Unsupported by Design" table is the contract. Add a
 getter only when a real consumer parses that type from the environment.
 
 The `yamlenv` subpackage is its own nested Go module (it alone carries the
-YAML dependency; the root module stays dependency-free) providing allowlisted
+YAML dependency, which the root module never links) providing allowlisted
 `${VAR}` expansion and the strict-loading pipeline for YAML-configured apps;
 the README documents its surface.
 
@@ -65,6 +66,6 @@ Tests are table-driven plus fuzz targets over the parse boundaries
 and `FuzzSecretPath` in the root module; `FuzzExpand`, `FuzzLoad`,
 `FuzzSanitizeDecodeError`, and `FuzzCheckSingleDocument` in yamlenv); the
 Warn diagnostics are asserted through an in-package recording handler so the
-root module stays dependency-free even in tests. CI (`ci / validate`) runs
+root module needs no test dependencies. CI (`ci / validate`) runs
 the same battery via the shared cplieger/ci workflows; conventional commits
 drive git-cliff release versioning.

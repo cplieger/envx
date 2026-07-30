@@ -29,5 +29,7 @@
 // caller owns its own diagnostics.
 //
 // envx reads the process environment at call time; it holds no state, starts
-// no goroutines, and has no dependencies beyond the standard library.
+// no goroutines, and depends on nothing beyond the standard library and
+// github.com/cplieger/pathinside, the standard-library-only path-name
+// predicates the Secret file rule is built from.
 package envx

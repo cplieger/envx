@@ -8,12 +8,12 @@
 
 > Typed environment-variable configuration for containerized Go apps
 
-A tiny, standard-library-only reader for the way containerized apps are
-actually configured: environment variables with sensible defaults. Every
-getter takes a fallback and never fails. An unset or empty variable falls
-back silently; a set-but-malformed value falls back with one `slog` Warn
-naming the variable, so a deployment typo shows up in the logs instead of
-silently changing behavior.
+A tiny reader for the way containerized apps are actually configured:
+environment variables with sensible defaults. Every getter takes a fallback
+and never fails. An unset or empty variable falls back silently; a
+set-but-malformed value falls back with one `slog` Warn naming the variable,
+so a deployment typo shows up in the logs instead of silently changing
+behavior.
 
 Two calls cover the values an app cannot default: `Require` returns a typed
 error for a missing mandatory variable, and `Secret` adds the Docker secrets
@@ -28,7 +28,9 @@ expanded document can embed a secret in its error message.
 `SanitizeDecodeError` closes it, rebuilding the error so it is safe to log
 at startup. yamlenv is its own nested Go module,
 versioned and released independently; it alone carries the YAML dependency,
-so the root `envx` module stays zero-dependency. Install it separately:
+which the root `envx` module never links — plain `envx` requires only
+`github.com/cplieger/pathinside` (standard-library-only, and the source of the
+`KEY_FILE` path rule). Install yamlenv separately:
 `go get github.com/cplieger/envx/yamlenv@vX.Y.Z`.
 
 ## Install

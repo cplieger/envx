@@ -126,8 +126,8 @@ func TestSecret(t *testing.T) {
 // caller must be able to say WHY a secret file was unusable without matching this
 // package's error text and without echoing the operator-supplied path, which is the one
 // thing that must not reach a log (a KEY_FILE misconfigured to hold the secret ITSELF is
-// the failure mode). Each case also pins that the pre-existing message text survived the
-// change byte for byte, and that the classes do not overlap.
+// the failure mode). Each case also pins the message the class rides alongside, and that
+// the classes do not overlap.
 func TestSecret_failure_classes_are_nameable(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "big")
@@ -139,7 +139,6 @@ func TestSecret_failure_classes_are_nameable(t *testing.T) {
 		t.Fatal(err)
 	}
 	unclean := "/run/secrets/../token"
-	dotdot := filepath.Join(dir, "token..v2")
 
 	allClasses := []error{
 		ErrSecretFilePathRejected,
@@ -157,12 +156,7 @@ func TestSecret_failure_classes_are_nameable(t *testing.T) {
 		"an unclean path is a policy rejection": {
 			path: unclean,
 			want: ErrSecretFilePathRejected,
-			text: `secret file path rejected (must be clean and contain no ".."): ` + unclean,
-		},
-		"a clean path carrying .. is still a policy rejection": {
-			path: dotdot,
-			want: ErrSecretFilePathRejected,
-			text: `secret file path rejected (must be clean and contain no ".."): ` + dotdot,
+			text: `secret file path rejected (must be clean and contain no ".." path component): ` + unclean,
 		},
 		"an oversized file is its own class": {
 			path: big,
@@ -196,6 +190,104 @@ func TestSecret_failure_classes_are_nameable(t *testing.T) {
 			}
 			if tc.text != "" && !strings.Contains(err.Error(), tc.text) {
 				t.Errorf("Secret() = %q, want it to still contain %q verbatim", err, tc.text)
+			}
+		})
+	}
+}
+
+// TestSecret_secret_file_path_rule pins the KEY_FILE path rule at full precision, both
+// halves of it.
+//
+// The rule is the OR of pathinside's two hygiene predicates — !IsCanonical(path) ||
+// HasDotDot(path) — and it judges the path AS WRITTEN. It replaced a substring ".." test,
+// which loosens exactly one class and no other: a path that is ALREADY in Clean form and
+// whose ".." occurrences all sit inside a component NAME. Such a path traverses nowhere
+// (every component is an ordinary name, and Clean form means the string opened is the
+// string validated), so refusing it bought nothing. The accepted half is asserted by
+// actually reading the secret rather than by the absence of a rejection: the point is
+// that these operators get their credential, not merely a different error.
+//
+// The refused half is asserted exhaustively by shape, because that is the half a
+// loosening could have damaged: any ".." component, and any unclean spelling whether or
+// not it traverses.
+func TestSecret_secret_file_path_rule(t *testing.T) {
+	dir := t.TempDir()
+	// The canonical spelling of a real, readable secret file whose NAME carries two
+	// dots, plus a subdirectory to spell a traversal through. Both exist before any
+	// case runs, so every refusal below is the rule's and never the filesystem's.
+	realFile := filepath.Join(dir, "key..v2")
+	if err := os.WriteFile(realFile, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("two dots inside a name is an ordinary file and is read", func(t *testing.T) {
+		for _, name := range []string{"key..v2", "...", "....", "token..", "..v2"} {
+			p := filepath.Join(dir, name)
+			if err := os.WriteFile(p, []byte("s3cret\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ENVX_TEST_PATHRULE_FILE", p)
+			got, err := Secret("ENVX_TEST_PATHRULE")
+			if err != nil {
+				t.Errorf("Secret() for %q = %v; %q is an ordinary filename, not a traversal", name, err, name)
+				continue
+			}
+			if got != "s3cret" {
+				t.Errorf("Secret() for %q = %q, want s3cret", name, got)
+			}
+		}
+	})
+
+	t.Run("a directory whose name begins with two dots is traversed into normally", func(t *testing.T) {
+		sub := filepath.Join(dir, "..extras")
+		if err := os.Mkdir(sub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(sub, "token")
+		if err := os.WriteFile(p, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("ENVX_TEST_PATHRULE_FILE", p)
+		got, err := Secret("ENVX_TEST_PATHRULE")
+		if err != nil {
+			t.Fatalf("Secret() = %v, want the file read: %q is a directory name, not a traversal", err, "..extras")
+		}
+		if got != "s3cret" {
+			t.Errorf("Secret() = %q, want s3cret", got)
+		}
+	})
+
+	// Two shapes are refused: a ".." COMPONENT, and an unclean spelling whether or not
+	// it traverses. The last four resolve to realFile, so they pin that the rule judges
+	// the spelling and not the destination — and that a refused pointer never falls
+	// through to the plain KEY.
+	for name, path := range map[string]string{
+		"the traversal itself":                       "..",
+		"a leading traversal":                        "../token",
+		"an interior traversal":                      "/run/secrets/../token",
+		"a traversal Clean would normalize away":     "/run/secrets/../../etc/shadow",
+		"a relative traversal leaving its own tree":  "a/../../b",
+		"a relative path spelled with a leading dot": "./token",
+		"a traversal that resolves to the real file": filepath.Join(dir, "sub") + "/../key..v2",
+		`a "." component before the real file`:       dir + "/./key..v2",
+		"a doubled separator before the real file":   dir + "//key..v2",
+		"a trailing separator on the real file":      realFile + "/",
+	} {
+		t.Run("refused: "+name, func(t *testing.T) {
+			t.Setenv("ENVX_TEST_PATHRULE", "from-env")
+			t.Setenv("ENVX_TEST_PATHRULE_FILE", path)
+			v, err := Secret("ENVX_TEST_PATHRULE")
+			if err == nil {
+				t.Fatalf("Secret() = %q, nil for %q; want the path rule to refuse it", v, path)
+			}
+			if !errors.Is(err, ErrSecretFilePathRejected) {
+				t.Errorf("Secret() = %v for %q, want errors.Is ErrSecretFilePathRejected (refused by the rule, not by the filesystem)", err, path)
+			}
+			if v != "" {
+				t.Errorf("value = %q for a refused path, want empty: a broken pointer never falls through to KEY", v)
 			}
 		})
 	}

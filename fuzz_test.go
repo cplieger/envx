@@ -1,6 +1,7 @@
 package envx
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -15,6 +16,25 @@ func silenceWarns(f *testing.F) {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	f.Cleanup(func() { slog.SetDefault(prev) })
+}
+
+// assertParseErrorValue pins the *ParseError contract across the whole input
+// space: whenever a strict numeric variant rejects a value, the error must be a
+// *ParseError whose Value is exactly the TRIMMED input. That is the property
+// consumers rely on to quote the rejected value without a second environment
+// read, and trimming is the half a regression would silently drop.
+func assertParseErrorValue(t *testing.T, err error, raw string) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	var perr *ParseError
+	if !errors.As(err, &perr) {
+		t.Fatalf("strict variant returned a non-*ParseError for %q: %v", raw, err)
+	}
+	if want := strings.TrimSpace(raw); perr.Value != want {
+		t.Fatalf("ParseError.Value = %q, want the trimmed input %q", perr.Value, want)
+	}
 }
 
 // FuzzBool asserts Bool never panics on arbitrary env values and always
@@ -160,6 +180,7 @@ func FuzzIntStrict(f *testing.F) {
 		if !ok && n != 0 {
 			t.Fatalf("!ok with non-zero value %d for %q", n, v)
 		}
+		assertParseErrorValue(t, err, v)
 		const sentinel = -987654321
 		tolerant := Int("ENVX_FUZZ_INTSTRICT", sentinel)
 		switch {
@@ -197,6 +218,7 @@ func FuzzDurationStrict(f *testing.F) {
 		if !ok && d != 0 {
 			t.Fatalf("!ok with non-zero value %v for %q", d, v)
 		}
+		assertParseErrorValue(t, err, v)
 		const sentinel = -987654321 * time.Second
 		tolerant := Duration("ENVX_FUZZ_DURSTRICT", sentinel)
 		if ok && tolerant != d {

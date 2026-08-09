@@ -6,6 +6,48 @@ import (
 	"time"
 )
 
+// ParseError reports a set-but-malformed environment variable from IntStrict or
+// DurationStrict. It carries the key and the TRIMMED value the parser actually
+// saw, so a caller can quote what was rejected without reaching back to the
+// environment.
+//
+// That second read is what this type exists to remove, and it was never
+// equivalent: os.Getenv returns the value UNTRIMMED, so a diagnostic built that
+// way can quote " 5x " while the parse error beside it is about "5x". Value is
+// the string the parse failed on, by construction.
+//
+// BoolStrict deliberately does NOT return it. That variant exists for a key
+// whose value must never be echoed (see BoolStrict), and a typed error carrying
+// the value would hand it to every caller that logs the error. For Int and
+// Duration the value is already repeated inside the wrapped parse error
+// (*strconv.NumError.Num, time.ParseDuration's message), so Value discloses
+// nothing the error did not already carry.
+//
+// Err is the underlying strconv or time parse error; errors.As still reaches
+// *strconv.NumError through it.
+//
+// Field order is govet fieldalignment's, not editorial: Err leads because an
+// interface is two pointer words, which shortens the GC scan range.
+type ParseError struct {
+	// Err is the underlying strconv or time parse error.
+	Err error
+	// Key is the environment variable name whose value did not parse.
+	Key string
+	// Value is the trimmed value the parser rejected.
+	Value string
+}
+
+// Error implements the error interface. The text is the key followed by the
+// underlying parse error, which is the form every strict variant has always
+// returned; only the type is new.
+func (e *ParseError) Error() string {
+	return "environment variable " + e.Key + ": " + e.Err.Error()
+}
+
+// Unwrap exposes the underlying parse error so errors.As reaches
+// *strconv.NumError, as callers of IntStrict already rely on.
+func (e *ParseError) Unwrap() error { return e.Err }
+
 // BoolStrict returns the boolean value of the environment variable key with
 // the parse result owned by the caller: a set-but-malformed value is returned
 // as an error instead of the tolerant getters' warn-and-fallback.
@@ -51,10 +93,14 @@ func BoolStrict(key string) (value, ok bool, err error) {
 // Use Int when a malformed value should fall back with a Warn; use IntStrict
 // when the caller must decide what a malformed value means (reject startup,
 // apply bounds, keep an existing value).
+//
+// A malformed value returns a *ParseError carrying the key and the trimmed
+// value, so a caller quoting the rejected input needs no second environment
+// read.
 func IntStrict(key string) (value int, ok bool, err error) {
-	n, _, ok, err := parseEnv(key, strconv.Atoi)
+	n, raw, ok, err := parseEnv(key, strconv.Atoi)
 	if err != nil {
-		return 0, false, fmt.Errorf("environment variable %s: %w", key, err)
+		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}
 	return n, ok, nil
 }
@@ -68,10 +114,14 @@ func IntStrict(key string) (value int, ok bool, err error) {
 // (0, false, err), valid (d, true, nil). As with Duration, a bare number
 // without a unit is rejected ("30" is ambiguous between seconds and minutes
 // across tools). Strict variants never log.
+//
+// A malformed value returns a *ParseError carrying the key and the trimmed
+// value, so a caller quoting the rejected input needs no second environment
+// read.
 func DurationStrict(key string) (value time.Duration, ok bool, err error) {
-	d, _, ok, err := parseEnv(key, time.ParseDuration)
+	d, raw, ok, err := parseEnv(key, time.ParseDuration)
 	if err != nil {
-		return 0, false, fmt.Errorf("environment variable %s: %w", key, err)
+		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}
 	return d, ok, nil
 }

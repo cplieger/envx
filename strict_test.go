@@ -287,3 +287,69 @@ func TestStrictErrorContract(t *testing.T) {
 		t.Errorf("DurationStrict error does not name the key: %v", err)
 	}
 }
+
+// TestParseErrorCarriesTheTrimmedValue pins the contract that removed the
+// consumers' second environment read: the error carries the value the parser
+// actually saw, TRIMMED. os.Getenv would return " 5x " where the parse failed
+// on "5x", so a caller quoting the raw variable could name a string the parser
+// never parsed. The trimming is the load-bearing half — an untrimmed Value
+// would reintroduce exactly the mismatch this replaced.
+func TestParseErrorCarriesTheTrimmedValue(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		set   string
+		want  string
+		parse func(string) error
+	}{
+		{"int padded", " 5x ", "5x", func(k string) error { _, _, err := IntStrict(k); return err }},
+		{"int plain", "seven", "seven", func(k string) error { _, _, err := IntStrict(k); return err }},
+		{"duration padded", "\t9zz\n", "9zz", func(k string) error { _, _, err := DurationStrict(k); return err }},
+		{"duration unitless", "30", "30", func(k string) error { _, _, err := DurationStrict(k); return err }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const key = "ENVX_TEST_PARSE_ERR"
+			t.Setenv(key, tc.set)
+
+			err := tc.parse(key)
+			var perr *ParseError
+			if !errors.As(err, &perr) {
+				t.Fatalf("error is not a *ParseError: %v", err)
+			}
+			if perr.Key != key {
+				t.Errorf("Key = %q, want %q", perr.Key, key)
+			}
+			if perr.Value != tc.want {
+				t.Errorf("Value = %q, want %q (the trimmed value the parser saw)", perr.Value, tc.want)
+			}
+			if perr.Err == nil {
+				t.Error("Err is nil; the underlying parse error must survive for errors.As")
+			}
+			// The message is what every strict variant has always returned;
+			// only the type is new, so no consumer's assertion may shift.
+			if want := "environment variable " + key + ": " + perr.Err.Error(); err.Error() != want {
+				t.Errorf("Error() = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestBoolStrictReturnsNoParseError pins the deliberate asymmetry. BoolStrict
+// exists for a key whose value must never be echoed, so it must NOT hand that
+// value back in a typed error every caller can log. If someone "unifies" the
+// three variants onto ParseError, this fails.
+func TestBoolStrictReturnsNoParseError(t *testing.T) {
+	const key = "ENVX_TEST_BOOLSTRICT_NOVALUE"
+	t.Setenv(key, "s3cret-ish")
+
+	_, _, err := BoolStrict(key)
+	if err == nil {
+		t.Fatal("BoolStrict accepted a malformed value")
+	}
+	var perr *ParseError
+	if errors.As(err, &perr) {
+		t.Errorf("BoolStrict returned a *ParseError carrying Value %q; it must never echo the value", perr.Value)
+	}
+	if strings.Contains(err.Error(), "s3cret-ish") {
+		t.Errorf("BoolStrict error repeats the value: %v", err)
+	}
+}

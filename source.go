@@ -58,7 +58,7 @@ func (s Source) String(key Key, fallback string) string {
 func (s Source) Require(key Key) (string, error) {
 	v := s.getenv(key)
 	if v == "" {
-		return "", &MissingError{Key: string(key)}
+		return "", &MissingError{Key: key}
 	}
 	return v, nil
 }
@@ -133,7 +133,7 @@ func (s Source) BoolStrict(key Key) (value, ok bool, err error) {
 func (s Source) IntStrict(key Key) (value int, ok bool, err error) {
 	n, raw, ok, err := parseEnv(s, key, strconv.Atoi)
 	if err != nil {
-		return 0, false, &ParseError{Key: string(key), Value: raw, Err: err}
+		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}
 	return n, ok, nil
 }
@@ -145,7 +145,7 @@ func (s Source) IntStrict(key Key) (value int, ok bool, err error) {
 func (s Source) DurationStrict(key Key) (value time.Duration, ok bool, err error) {
 	d, raw, ok, err := parseEnv(s, key, time.ParseDuration)
 	if err != nil {
-		return 0, false, &ParseError{Key: string(key), Value: raw, Err: err}
+		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}
 	return d, ok, nil
 }

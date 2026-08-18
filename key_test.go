@@ -10,12 +10,12 @@ import (
 // tests build it the same way so a wording change is a deliberate edit here,
 // not an accident there.
 func wantKeyPanic(k Key) string {
-	return "envx: " + strconv.Quote(string(k)) + " is not an environment variable name; did you swap key and fallback?"
+	return "envx: " + strconv.Quote(string(k)) + " is not an environment variable name"
 }
 
 // mustPanicWith asserts fn panics with exactly the wanted message. The exact
 // match matters: the message IS the diagnostic contract — it must name the
-// offending string and the likely transposition.
+// offending string.
 func mustPanicWith(t *testing.T, want string, fn func()) {
 	t.Helper()
 	defer func() {
@@ -36,14 +36,26 @@ func mustPanicWith(t *testing.T, want string, fn func()) {
 	fn()
 }
 
-// TestKeySwapPanicMessage pins the guard against the exact defect the Key
-// type exists for: the classic key/fallback transposition at a LITERAL call
-// site, which the type system cannot catch (both arguments are untyped
-// constants and convert implicitly). First use panics deterministically at
-// boot, naming the swapped value and the cause.
-func TestKeySwapPanicMessage(t *testing.T) {
-	const want = `envx: "127.0.0.1:7681" is not an environment variable name; did you swap key and fallback?`
-	mustPanicWith(t, want, func() { String("127.0.0.1:7681", "KWEB_LISTEN") })
+// TestMalformedKeyPanicMessage pins the diagnostic for a key that is not a
+// variable name — a typo, or a dynamically built name that came out wrong.
+// Without the panic such a key reads as permanently unset and the caller gets
+// its default forever, which is the silent failure the validation exists to
+// convert into a deterministic one.
+func TestMalformedKeyPanicMessage(t *testing.T) {
+	const want = `envx: "127.0.0.1:7681" is not an environment variable name`
+	mustPanicWith(t, want, func() { String("127.0.0.1:7681") })
+}
+
+// TestStringTakesNoFallback is a compile-time pin on the signature that closes
+// the key/fallback transposition class. A (key, fallback string) String was
+// two adjacent strings, so a swapped call read the fallback as a variable name
+// and returned the name as the value, silently and forever; the fix was to
+// delete the parameter rather than to detect the swap, since cmp.Or composes
+// the default and the two-parameter body was cmp.Or all along. Restoring a
+// second string parameter breaks this line.
+func TestStringTakesNoFallback(t *testing.T) {
+	var _ func(Key) string = String
+	var _ func(Key) string = Source{}.String
 }
 
 // TestMalformedKeyPanicsInEveryGetter sweeps the panic across the whole
@@ -53,7 +65,7 @@ func TestKeySwapPanicMessage(t *testing.T) {
 // may read anything, log anything, or fall back on a malformed key.
 func TestMalformedKeyPanicsInEveryGetter(t *testing.T) {
 	getters := map[string]func(Key){
-		"String":                func(k Key) { String(k, "fallback") },
+		"String":                func(k Key) { String(k) },
 		"Bool":                  func(k Key) { Bool(k, false) },
 		"Int":                   func(k Key) { Int(k, 0) },
 		"Duration":              func(k Key) { Duration(k, time.Second) },
@@ -64,7 +76,7 @@ func TestMalformedKeyPanicsInEveryGetter(t *testing.T) {
 		"Secret":                func(k Key) { _, _ = Secret(k) },
 		"SecretWithSource":      func(k Key) { _, _, _ = SecretWithSource(k) },
 		"IsBlankSecretFilePath": func(k Key) { _ = IsBlankSecretFilePath(k) },
-		"Source.String":         func(k Key) { Source{}.String(k, "fallback") },
+		"Source.String":         func(k Key) { Source{}.String(k) },
 		"Source.Bool":           func(k Key) { Source{}.Bool(k, false) },
 		"Source.Int":            func(k Key) { Source{}.Int(k, 0) },
 		"Source.Duration":       func(k Key) { Source{}.Duration(k, time.Second) },
@@ -85,11 +97,11 @@ func TestMalformedKeyPanicsInEveryGetter(t *testing.T) {
 	}
 }
 
-// TestKeyNameGrammar pins the boundary of the POSIX name rule
-// ([A-Za-z_][A-Za-z0-9_]*) on the shapes a swapped fallback actually takes —
-// addresses, paths, durations, flags — plus the grammar's own edges. String
-// carries the sweep: it is the widest-used getter and the only one with no
-// parse and no Warn, so a non-panic outcome asserts exactly one thing.
+// TestKeyNameGrammar pins the boundary of the name rule
+// ([A-Za-z_][A-Za-z0-9_]*) on the shapes a mistyped or mis-built key actually
+// takes — addresses, paths, durations, flags — plus the grammar's own edges.
+// String carries the sweep: it is the widest-used getter and the only one with
+// no parse and no Warn, so a non-panic outcome asserts exactly one thing.
 func TestKeyNameGrammar(t *testing.T) {
 	invalid := []Key{
 		" ",
@@ -110,7 +122,7 @@ func TestKeyNameGrammar(t *testing.T) {
 	}
 	for _, k := range invalid {
 		t.Run("invalid/"+strconv.Quote(string(k)), func(t *testing.T) {
-			mustPanicWith(t, wantKeyPanic(k), func() { String(k, "fallback") })
+			mustPanicWith(t, wantKeyPanic(k), func() { String(k) })
 		})
 	}
 
@@ -119,23 +131,10 @@ func TestKeyNameGrammar(t *testing.T) {
 		t.Run("valid/"+strconv.Quote(string(k)), func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil {
-					t.Errorf("String(%q, ...) panicked on a valid name: %v", k, r)
+					t.Errorf("String(%q) panicked on a valid name: %v", k, r)
 				}
 			}()
-			_ = String(k, "fallback")
+			_ = String(k)
 		})
-	}
-}
-
-// TestKeyResidualSwapIsNotCatchable documents the accepted gap in the guard,
-// so a future "tighten the validation" reads what the boundary already is: a
-// transposition whose fallback happens to BE a valid variable name passes
-// both layers — it compiles (untyped constants convert) and it validates
-// ("default" is a well-formed name) — and silently reads the wrong variable.
-// No signature or run-time rule can catch that shape; the Key doc says so.
-func TestKeyResidualSwapIsNotCatchable(t *testing.T) {
-	t.Setenv("default", "") // pin the swapped read to the empty-equals-unset path
-	if got := String("default", "MY_VAR"); got != "MY_VAR" {
-		t.Errorf(`String("default", "MY_VAR") = %q, want the documented residual: the intended KEY comes back as the value`, got)
 	}
 }

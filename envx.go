@@ -7,18 +7,32 @@ import (
 	"time"
 )
 
-// String returns the value of the environment variable key, or fallback when
-// the variable is unset or empty. An empty value is treated as unset because
-// compose files and CI matrices routinely materialize `KEY=` for a knob the
-// operator left blank; distinguishing that from absence is almost never what
-// a config reader wants (use os.LookupEnv directly when it is).
+// String returns the value of the environment variable key, empty when the
+// variable is unset or set to the empty string. Those two cases are
+// deliberately indistinguishable here, because compose files and CI matrices
+// routinely materialize `KEY=` for a knob the operator left blank; use
+// os.LookupEnv directly for the rare caller that must tell them apart.
 //
-// Unlike the parsing getters (Bool, Int, Duration), String does not trim the
-// value: whitespace can be meaningful in a free-form string, and the caller
-// knows whether its value is a path, a token, or a list. A whitespace-only
-// value therefore counts as set.
-func String(key Key, fallback string) string {
-	return Source{}.String(key, fallback)
+// String takes no fallback, and that is the whole reason it is safe. A
+// (key, fallback string) pair is two adjacent strings, so a transposed call
+// read the fallback as a variable name and returned the name as the value —
+// silently, forever. There is nothing to transpose against one parameter.
+// Compose the default with [cmp.Or], which is what the two-parameter form did
+// internally anyway:
+//
+//	addr := cmp.Or(envx.String("APP_LISTEN"), ":8080")
+//
+// The parsing getters (Bool, Int, Duration) keep their fallback: it is a
+// different type from the key, so no transposition compiles, and a malformed
+// value has to resolve to something. String has nothing to parse, so it needs
+// no such rule.
+//
+// Unlike the parsing getters, String does not trim the value: whitespace can
+// be meaningful in a free-form string, and the caller knows whether its value
+// is a path, a token, or a list. A whitespace-only value therefore counts as
+// set, and cmp.Or keeps it.
+func String(key Key) string {
+	return Source{}.String(key)
 }
 
 // Bool returns the boolean value of the environment variable key, or fallback

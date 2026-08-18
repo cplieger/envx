@@ -1,13 +1,19 @@
 // Package envx reads typed configuration from environment variables, the
 // standard way a containerized app is configured.
 //
-// Every getter takes a fallback and never fails: an unset or empty variable
-// returns the fallback silently, and a set-but-malformed value returns the
-// fallback with one Warn line through slog's default logger, so a typo in a
-// deployment surfaces in the logs instead of silently changing behavior.
-// Boolean parsing is tolerant (true/1/yes/on, false/0/no/off,
-// case-insensitive, trimmed) because that is what deployment YAML tends to
-// contain.
+// Every getter takes its variable name as a Key and a fallback, and never
+// fails on the environment's content: an unset or empty variable returns the
+// fallback silently, and a set-but-malformed value returns the fallback with
+// one Warn line through slog's default logger, so a typo in a deployment
+// surfaces in the logs instead of silently changing behavior. Boolean parsing
+// is tolerant (true/1/yes/on, false/0/no/off, case-insensitive, trimmed)
+// because that is what deployment YAML tends to contain.
+//
+// The one thing a getter refuses at run time is a malformed KEY: a Key that
+// is not an environment-variable name panics on first use, naming the string
+// and the likely cause (key and fallback transposed at the call site). That
+// is a programmer error caught at startup, not a data error — see Key for the
+// two-layer contract and its residual gap.
 //
 // Two calls handle the values an app cannot default: Require returns an error
 // for a missing mandatory variable, and Secret additionally supports the
@@ -27,6 +33,11 @@
 // so the two accept exactly the same spellings; prefer it over Bool for a key
 // whose value may be sensitive (the Warn line names the raw value) or when the
 // caller owns its own diagnostics.
+//
+// An app that threads its environment as a function value — the testable-main
+// shape, run(os.Args, os.Getenv) — reads through a Source instead: its
+// methods are the getters above with the environment injected, and the
+// package-level getters are exactly the zero Source's methods over os.Getenv.
 //
 // envx reads the process environment at call time; it holds no state, starts
 // no goroutines, and depends on nothing beyond the standard library and

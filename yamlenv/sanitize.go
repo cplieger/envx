@@ -58,15 +58,19 @@ type sanitizeOptions struct {
 	echoUnknownKey bool
 }
 
-// WithUnknownKeyEcho keeps the field name of a strict-decode unknown-key entry
-// ("line N: field X not found in type T", from a KnownFields(true) decode) in
-// the sanitized error: "line N: unknown configuration key "X"". The key name
-// is what the operator needs to fix a misspelled or misplaced key, and when
-// the strict decode runs on the PRE-expansion document a key cannot carry an
-// expanded secret — but that safety argument is the caller's to make, so the
-// default stays redact-everything and the echo is an explicit opt-in.
-func WithUnknownKeyEcho() SanitizeOption {
-	return func(o *sanitizeOptions) { o.echoUnknownKey = true }
+// WithUnknownKeyEcho sets whether the field name of a strict-decode
+// unknown-key entry ("line N: field X not found in type T", from a
+// KnownFields(true) decode) is kept in the sanitized error: "line N: unknown
+// configuration key "X"". The key name is what the operator needs to fix a
+// misspelled or misplaced key, and when the strict decode runs on the
+// PRE-expansion document a key cannot carry an expanded secret — but that
+// safety argument is the caller's to make, so the no-option default stays
+// redact-everything and the echo is an explicit opt-in:
+// WithUnknownKeyEcho(true). Passing false spells the default explicitly; when
+// the option repeats, the last one wins, so a later WithUnknownKeyEcho(false)
+// restores redaction over an earlier opt-in.
+func WithUnknownKeyEcho(echo bool) SanitizeOption {
+	return func(o *sanitizeOptions) { o.echoUnknownKey = echo }
 }
 
 // SanitizeDecodeError rewrites a yaml.v3 parse or decode error so that no
@@ -91,7 +95,7 @@ func WithUnknownKeyEcho() SanitizeOption {
 // a "<redacted>" placeholder; a duplicate-mapping-key entry keeps both line
 // numbers and redacts the key (a misindented paste can put a secret in key
 // position); a strict-decode unknown-key entry redacts the key name by
-// default — pass WithUnknownKeyEcho to keep it. The error is detected with
+// default — pass WithUnknownKeyEcho(true) to keep it. The error is detected with
 // errors.As, so a wrapped TypeError is recognized.
 //
 // The returned error is newly constructed and deliberately does NOT wrap err:

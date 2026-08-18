@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 )
 
 // FuzzLoad pins Load's pipeline invariants for arbitrary config-file bytes:

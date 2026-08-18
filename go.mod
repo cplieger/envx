@@ -1,4 +1,4 @@
-module github.com/cplieger/envx
+module github.com/cplieger/envx/v2
 
 go 1.26.7
 

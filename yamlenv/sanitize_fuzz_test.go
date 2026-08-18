@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -32,7 +32,7 @@ func FuzzSanitizeDecodeError(f *testing.F) {
 		}}
 		for name, got := range map[string]string{
 			"default": yamlenv.SanitizeDecodeError(typeErr).Error(),
-			"echo":    yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho()).Error(),
+			"echo":    yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho(true)).Error(),
 		} {
 			if strings.Contains(got, sentinel) {
 				t.Errorf("SanitizeDecodeError(%s, pre=%q post=%q) leaks the excerpt sentinel: %q", name, pre, post, got)

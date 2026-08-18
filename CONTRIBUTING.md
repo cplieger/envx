@@ -12,20 +12,27 @@ supplies the `KEY_FILE` path rule. Nothing is needed for the tests. The whole
 surface is three ideas:
 
 - **`String` / `Bool` / `Int` / `Duration`**: fallback-taking getters that
-  never fail: unset or empty falls back silently; set-but-malformed falls
-  back with one `slog` Warn naming the key, the raw value, the expected
-  kind, and the fallback used. Empty-equals-unset is deliberate (compose
-  files materialize `KEY=` for blank knobs); tolerant `Bool` spellings
-  (`true/1/yes/on`, `false/0/no/off`) are deliberate (that is what
-  deployment YAML contains). The strict variants (`IntStrict`,
-  `DurationStrict`) return the parse result as data instead and never log;
-  the caller owns the malformed-value decision.
+  never fail on the environment's content: unset or empty falls back
+  silently; set-but-malformed falls back with one `slog` Warn naming the key,
+  the raw value, the expected kind, and the fallback used. Every getter takes
+  its variable name as a `Key`, validated on first use — a key that is not an
+  environment-variable name panics, naming the likely key/fallback
+  transposition (a programmer error at the call site, caught at boot).
+  Empty-equals-unset is deliberate (compose files materialize `KEY=` for
+  blank knobs); tolerant `Bool` spellings (`true/1/yes/on`, `false/0/no/off`)
+  are deliberate (that is what deployment YAML contains). The strict variants
+  (`BoolStrict`, `IntStrict`, `DurationStrict`) return the parse result as
+  data instead and never log; the caller owns the malformed-value decision.
+  `Source{Get: getenv}` is the same getter family over an injected
+  environment reader, for the `run(os.Args, os.Getenv)` testable-main shape;
+  the package-level getters are exactly the zero `Source`.
 - **`Require`**: returns `*MissingError` instead of exiting, so a caller
   can collect every missing variable and fail startup once.
 - **`Secret`**: `Require` plus the Docker secrets convention: a `KEY_FILE`
   variable pointing at a mounted file wins over `KEY`; the read is
   single-handle (no stat-then-open race), size-bounded (1 MB), traversal-
-  rejected, and whitespace-trimmed. The secret value never appears in an
+  rejected, and returned as written apart from at most one trailing line
+  ending. The secret value never appears in an
   error or log line. `SecretWithSource` additionally reports which channel
   answered, and `IsBlankSecretFilePath` reports a `KEY_FILE` that is present
   but blank — a pointer, unlike a value, is broken rather than absent when it
@@ -44,8 +51,10 @@ the README documents its surface.
 
 ## Behavior invariants
 
-- A getter never fails and never exits; `Require`/`Secret` return errors and
-  never exit. Process-lifecycle decisions belong to the caller.
+- A getter never fails and never exits on the environment's CONTENT;
+  `Require`/`Secret` return errors and never exit. Process-lifecycle
+  decisions belong to the caller. The one panic is a malformed `Key` — a
+  call-site programmer error, not an environment state — caught on first use.
 - Malformed values are visible (one Warn through `slog.Default()`) but never
   fatal, and `Secret` never routes a secret value through that Warn.
 - No state, no goroutines, no import-time environment reads.
@@ -62,7 +71,8 @@ golangci-lint run ./...
 repeat the same commands inside `yamlenv/`.
 
 Tests are table-driven plus fuzz targets over the parse boundaries
-(`FuzzBool`, `FuzzInt`, `FuzzDuration`, `FuzzIntStrict`, `FuzzDurationStrict`,
+(`FuzzKeyValidation`, `FuzzBool`, `FuzzInt`, `FuzzDuration`, `FuzzBoolStrict`,
+`FuzzIntStrict`, `FuzzDurationStrict`,
 and `FuzzSecretPath` in the root module; `FuzzExpand`, `FuzzLoad`,
 `FuzzSanitizeDecodeError`, and `FuzzCheckSingleDocument` in yamlenv); the
 Warn diagnostics are asserted through an in-package recording handler so the

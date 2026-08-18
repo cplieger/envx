@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 )
 
 // probeConfig is the throwaway config shape the strict unknown-key tests

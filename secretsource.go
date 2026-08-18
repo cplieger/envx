@@ -62,15 +62,16 @@ var ErrBlankSecretFile = errors.New("envx: secret file is blank")
 //
 // It reports the state and changes none of it: a deployment where `KEY_FILE=` falls
 // through to KEY keeps doing so, including for callers that never ask.
-func IsBlankSecretFilePath(key string) bool {
-	path, ok := os.LookupEnv(secretFileKey(key))
+func IsBlankSecretFilePath(key Key) bool {
+	key.validate()
+	path, ok := os.LookupEnv(string(secretFileKey(key)))
 	return ok && strings.TrimSpace(path) == ""
 }
 
 // secretFileKey names the companion variable holding the path to key's secret file. The
 // suffix lives in one place so the resolver and IsBlankSecretFilePath cannot come to
 // disagree about which variable they are talking about.
-func secretFileKey(key string) string {
+func secretFileKey(key Key) Key {
 	return key + "_FILE"
 }
 
@@ -110,8 +111,9 @@ const (
 // environment. A KEY_FILE that is present but blank names no file and is therefore not
 // the file channel at all: resolution falls through to KEY, and IsBlankSecretFilePath is
 // how a caller detects that a secret pointer it was given is broken.
-func SecretWithSource(key string) (value string, source SecretSource, err error) {
-	if path := os.Getenv(secretFileKey(key)); path != "" {
+func SecretWithSource(key Key) (value string, source SecretSource, err error) {
+	key.validate()
+	if path := os.Getenv(string(secretFileKey(key))); path != "" {
 		data, readErr := readSecretFile(path)
 		if readErr != nil {
 			return "", SourceFile, fmt.Errorf("read secret file for %s: %w", key, readErr)

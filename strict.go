@@ -1,8 +1,6 @@
 package envx
 
 import (
-	"fmt"
-	"strconv"
 	"time"
 )
 
@@ -25,6 +23,9 @@ import (
 //
 // Err is the underlying strconv or time parse error; errors.As still reaches
 // *strconv.NumError through it.
+//
+// Key and Value are plain strings, not Key: they are outputs a caller formats
+// into its own diagnostics, and the Key type guards call-site inputs.
 //
 // Field order is govet fieldalignment's, not editorial: Err leads because an
 // interface is two pointer words, which shortens the GC scan range.
@@ -71,12 +72,8 @@ func (e *ParseError) Unwrap() error { return e.Err }
 //
 // (value and ok share their bool type in the signature at the linter's
 // insistence; they mean what the family's other strict variants mean.)
-func BoolStrict(key string) (value, ok bool, err error) {
-	b, _, ok, err := parseEnv(key, parseBool)
-	if err != nil {
-		return false, false, fmt.Errorf("environment variable %s: %w", key, err)
-	}
-	return b, ok, nil
+func BoolStrict(key Key) (value, ok bool, err error) {
+	return Source{}.BoolStrict(key)
 }
 
 // IntStrict returns the integer value of the environment variable key with
@@ -97,12 +94,8 @@ func BoolStrict(key string) (value, ok bool, err error) {
 // A malformed value returns a *ParseError carrying the key and the trimmed
 // value, so a caller quoting the rejected input needs no second environment
 // read.
-func IntStrict(key string) (value int, ok bool, err error) {
-	n, raw, ok, err := parseEnv(key, strconv.Atoi)
-	if err != nil {
-		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
-	}
-	return n, ok, nil
+func IntStrict(key Key) (value int, ok bool, err error) {
+	return Source{}.IntStrict(key)
 }
 
 // DurationStrict returns the value of the environment variable key parsed
@@ -118,10 +111,6 @@ func IntStrict(key string) (value int, ok bool, err error) {
 // A malformed value returns a *ParseError carrying the key and the trimmed
 // value, so a caller quoting the rejected input needs no second environment
 // read.
-func DurationStrict(key string) (value time.Duration, ok bool, err error) {
-	d, raw, ok, err := parseEnv(key, time.ParseDuration)
-	if err != nil {
-		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
-	}
-	return d, ok, nil
+func DurationStrict(key Key) (value time.Duration, ok bool, err error) {
+	return Source{}.DurationStrict(key)
 }

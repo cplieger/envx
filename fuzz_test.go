@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,41 @@ func assertParseErrorValue(t *testing.T, err error, raw string) {
 	if want := strings.TrimSpace(raw); perr.Value != want {
 		t.Fatalf("ParseError.Value = %q, want the trimmed input %q", perr.Value, want)
 	}
+}
+
+// FuzzKeyValidation pins Key's name grammar against a regexp oracle across
+// the whole input space: a getter panics on exactly the strings the POSIX
+// name grammar ([A-Za-z_][A-Za-z0-9_]*) rejects, with the exact
+// transposition-naming message, and never panics on a name the grammar
+// accepts. String carries the probe: it has no parse and no Warn, so the
+// validation is the only thing exercised.
+func FuzzKeyValidation(f *testing.F) {
+	for _, s := range []string{
+		"", "A", "_", "APP_PORT", "127.0.0.1:7681", "1PORT", "APP-KEY",
+		"app key", ":8080", "6h", "${APP}", "🚀", "a\x00b", "line\n", " PAD ",
+	} {
+		f.Add(s)
+	}
+	oracle := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	f.Fuzz(func(t *testing.T, s string) {
+		want := "envx: " + strconv.Quote(s) + " is not an environment variable name; did you swap key and fallback?"
+		defer func() {
+			r := recover()
+			if oracle.MatchString(s) {
+				if r != nil {
+					t.Fatalf("String(%q, ...) panicked on a valid name: %v", s, r)
+				}
+				return
+			}
+			if r == nil {
+				t.Fatalf("String(%q, ...) did not panic on an invalid name", s)
+			}
+			if msg, ok := r.(string); !ok || msg != want {
+				t.Fatalf("panic = %v, want %q", r, want)
+			}
+		}()
+		_ = String(Key(s), "fallback")
+	})
 }
 
 // FuzzBool asserts Bool never panics on arbitrary env values and always

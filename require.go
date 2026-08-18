@@ -15,12 +15,12 @@ import (
 // variables into one startup failure.
 type MissingError struct {
 	// Key is the environment variable name that was required.
-	Key string
+	Key Key
 }
 
 // Error implements the error interface.
 func (e *MissingError) Error() string {
-	return "required environment variable is missing: " + e.Key
+	return "required environment variable is missing: " + string(e.Key)
 }
 
 // Require returns the value of the environment variable key, or a

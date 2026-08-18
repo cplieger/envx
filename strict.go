@@ -24,8 +24,10 @@ import (
 // Err is the underlying strconv or time parse error; errors.As still reaches
 // *strconv.NumError through it.
 //
-// Key and Value are plain strings, not Key: they are outputs a caller formats
-// into its own diagnostics, and the Key type guards call-site inputs.
+// Key carries the Key type, not a plain string: the field IS an environment
+// variable name, so a caller that aggregates failures and re-reads a variable
+// with a default passes it straight back into a getter. Value stays a plain
+// string because a rejected value is not a key.
 //
 // Field order is govet fieldalignment's, not editorial: Err leads because an
 // interface is two pointer words, which shortens the GC scan range.
@@ -33,7 +35,7 @@ type ParseError struct {
 	// Err is the underlying strconv or time parse error.
 	Err error
 	// Key is the environment variable name whose value did not parse.
-	Key string
+	Key Key
 	// Value is the trimmed value the parser rejected.
 	Value string
 }
@@ -42,7 +44,7 @@ type ParseError struct {
 // underlying parse error, which is the form every strict variant has always
 // returned; only the type is new.
 func (e *ParseError) Error() string {
-	return "environment variable " + e.Key + ": " + e.Err.Error()
+	return "environment variable " + string(e.Key) + ": " + e.Err.Error()
 }
 
 // Unwrap exposes the underlying parse error so errors.As reaches

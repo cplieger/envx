@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cplieger/envx"
+	"github.com/cplieger/envx/v2"
 )
 
 func Example() {
@@ -33,6 +33,22 @@ func ExampleRequire() {
 	}
 	fmt.Println(len(missing), "missing")
 	// Output: 2 missing
+}
+
+func ExampleSource() {
+	// The testable-main shape: main hands run its real environment
+	// (run(os.Args, os.Getenv)), tests hand it a fake. Source adopts the
+	// injected getter without giving that seam up; the zero Source reads the
+	// process environment.
+	run := func(getenv func(string) string) (int, time.Duration) {
+		env := envx.Source{Get: getenv}
+		return env.Int("APP_RETRIES", 3), env.Duration("APP_INTERVAL", 6*time.Hour)
+	}
+
+	fake := map[string]string{"APP_RETRIES": "5"}
+	retries, interval := run(func(name string) string { return fake[name] })
+	fmt.Println(retries, interval)
+	// Output: 5 6h0m0s
 }
 
 func ExampleIsBlankSecretFilePath() {

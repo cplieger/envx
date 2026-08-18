@@ -27,12 +27,8 @@ func (e *MissingError) Error() string {
 // *MissingError when it is unset or empty. It returns an error rather than
 // exiting so the caller controls startup failure (collect every missing key,
 // log through the configured handler, then exit once).
-func Require(key string) (string, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return "", &MissingError{Key: key}
-	}
-	return v, nil
+func Require(key Key) (string, error) {
+	return Source{}.Require(key)
 }
 
 // maxSecretFileSize bounds a KEY_FILE secret read. Real secrets are tens of
@@ -142,7 +138,7 @@ func unreadableSecretFile(cause error) error {
 // KEY_FILE. Secret delegates to it, so the two cannot drift. Use
 // IsBlankSecretFilePath when a KEY_FILE that is present but blank must be
 // refused instead of read as absent.
-func Secret(key string) (string, error) {
+func Secret(key Key) (string, error) {
 	v, _, err := SecretWithSource(key)
 	return v, err
 }

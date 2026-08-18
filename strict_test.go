@@ -299,12 +299,12 @@ func TestParseErrorCarriesTheTrimmedValue(t *testing.T) {
 		name  string
 		set   string
 		want  string
-		parse func(string) error
+		parse func(Key) error
 	}{
-		{"int padded", " 5x ", "5x", func(k string) error { _, _, err := IntStrict(k); return err }},
-		{"int plain", "seven", "seven", func(k string) error { _, _, err := IntStrict(k); return err }},
-		{"duration padded", "\t9zz\n", "9zz", func(k string) error { _, _, err := DurationStrict(k); return err }},
-		{"duration unitless", "30", "30", func(k string) error { _, _, err := DurationStrict(k); return err }},
+		{"int padded", " 5x ", "5x", func(k Key) error { _, _, err := IntStrict(k); return err }},
+		{"int plain", "seven", "seven", func(k Key) error { _, _, err := IntStrict(k); return err }},
+		{"duration padded", "\t9zz\n", "9zz", func(k Key) error { _, _, err := DurationStrict(k); return err }},
+		{"duration unitless", "30", "30", func(k Key) error { _, _, err := DurationStrict(k); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const key = "ENVX_TEST_PARSE_ERR"

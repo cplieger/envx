@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -99,7 +99,7 @@ func TestLoad(t *testing.T) {
 	t.Run("unknown-key echo opts in through WithSanitizeOptions", func(t *testing.T) {
 		var cfg loadConfig
 		_, err := yamlenv.Load([]byte("prot_typo: x\n"), &cfg, allowAppPrefix,
-			yamlenv.WithSanitizeOptions(yamlenv.WithUnknownKeyEcho()))
+			yamlenv.WithSanitizeOptions(yamlenv.WithUnknownKeyEcho(true)))
 		if err == nil || !strings.Contains(err.Error(), `unknown configuration key "prot_typo"`) {
 			t.Fatalf("err = %v, want the echoed key name", err)
 		}
@@ -174,7 +174,7 @@ func TestLoad(t *testing.T) {
 		t.Setenv("APP_PORT", "8080")
 		var cfg loadConfig
 		_, err := yamlenv.Load([]byte("port: ${APP_PORT}\ntypo_key: x\n"), &cfg, allowAppPrefix,
-			yamlenv.WithSanitizeOptions(yamlenv.WithUnknownKeyEcho()))
+			yamlenv.WithSanitizeOptions(yamlenv.WithUnknownKeyEcho(true)))
 		if err == nil || !strings.Contains(err.Error(), `unknown configuration key "typo_key"`) {
 			t.Fatalf("err = %v, want the unknown-key finding to survive the artifact filter", err)
 		}
@@ -231,6 +231,94 @@ func TestLoad(t *testing.T) {
 					t.Errorf("Load(out=%v) = %v, want the misuse error", tc.out, err)
 				}
 			})
+		}
+	})
+}
+
+// TestLoadClassifiesUnmarshalerErrors pins the typed classification of the
+// decode step: a failure produced by the config type's OWN UnmarshalYAML is
+// detectable — and claimable through WithErrorPassthrough — as
+// *yamlenv.UnmarshalerError with errors.As, carrying the app's message
+// verbatim and the original error underneath, while yaml.v3's own decode
+// errors never receive the type. The old string-prefix predicate (the
+// appOwned helper above) keeps working through the wrap; this is the typed
+// replacement consumers migrate to.
+func TestLoadClassifiesUnmarshalerErrors(t *testing.T) {
+	t.Parallel()
+	claimUnmarshaler := func(err error) bool {
+		_, ok := errors.AsType[*yamlenv.UnmarshalerError](err)
+		return ok
+	}
+
+	t.Run("app unmarshaler failure is claimable by type", func(t *testing.T) {
+		t.Parallel()
+		var cfg durConfig
+		_, err := yamlenv.Load([]byte("timeout: notaduration\n"), &cfg, allowAppPrefix,
+			yamlenv.WithErrorPassthrough(claimUnmarshaler))
+		if err == nil {
+			t.Fatal("Load = nil, want the app-owned decode error")
+		}
+		ue, ok := errors.AsType[*yamlenv.UnmarshalerError](err)
+		if !ok {
+			t.Fatalf("Load = %v (%T), want *UnmarshalerError reachable with errors.As", err, err)
+		}
+		if want := "line 1: invalid duration (value withheld)"; err.Error() != want {
+			t.Errorf("Error() = %q, want the app vocabulary verbatim: %q", err.Error(), want)
+		}
+		if ue.Err == nil || ue.Err.Error() != err.Error() {
+			t.Errorf("Err = %v, want the unmarshaler's error unchanged under Unwrap", ue.Err)
+		}
+	})
+
+	t.Run("reachable through a consumer's own wrap", func(t *testing.T) {
+		t.Parallel()
+		// The consumer shape: a config loader returning
+		// fmt.Errorf("parse YAML: %w", err) around Load's error.
+		var cfg durConfig
+		_, err := yamlenv.Load([]byte("timeout: notaduration\n"), &cfg, allowAppPrefix,
+			yamlenv.WithErrorPassthrough(claimUnmarshaler))
+		if err == nil {
+			t.Fatal("Load = nil, want the app-owned decode error")
+		}
+		wrapped := fmt.Errorf("parse YAML: %w", err)
+		if _, ok := errors.AsType[*yamlenv.UnmarshalerError](wrapped); !ok {
+			t.Errorf("errors.As through a consumer wrap = false, want the type reachable: %v", wrapped)
+		}
+	})
+
+	t.Run("yaml's own wrong-type error never carries the type", func(t *testing.T) {
+		t.Parallel()
+		var cfg loadConfig
+		_, err := yamlenv.Load([]byte("port: notanint\n"), &cfg, allowAppPrefix,
+			yamlenv.WithErrorPassthrough(claimUnmarshaler))
+		if err == nil {
+			t.Fatal("Load = nil, want a decode error")
+		}
+		if _, ok := errors.AsType[*yamlenv.UnmarshalerError](err); ok {
+			t.Errorf("yaml.v3's own decode error was classified app-owned: %v", err)
+		}
+		// The typed predicate could not claim it, so it was sanitized: the
+		// structurally-safe predicate can never re-open the leak.
+		if strings.Contains(err.Error(), "notanint") {
+			t.Errorf("err = %q, leaked the scalar excerpt", err)
+		}
+		if !strings.Contains(err.Error(), "cannot unmarshal") {
+			t.Errorf("err = %q, want the sanitized wrong-type shape", err)
+		}
+	})
+
+	t.Run("without a passthrough the classification stays fail-closed", func(t *testing.T) {
+		t.Parallel()
+		var cfg durConfig
+		_, err := yamlenv.Load([]byte("timeout: notaduration\n"), &cfg, allowAppPrefix)
+		if err == nil {
+			t.Fatal("Load = nil, want a decode error")
+		}
+		if _, ok := errors.AsType[*yamlenv.UnmarshalerError](err); ok {
+			t.Errorf("sanitized error still carries the typed wrap: %v", err)
+		}
+		if strings.Contains(err.Error(), "invalid duration") {
+			t.Errorf("err = %q, want the app vocabulary withheld without an explicit opt-in", err)
 		}
 	})
 }

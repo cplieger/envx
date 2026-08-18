@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -16,8 +16,8 @@ func TestSanitizeDecodeErrorNil(t *testing.T) {
 	if got := yamlenv.SanitizeDecodeError(nil); got != nil {
 		t.Errorf("SanitizeDecodeError(nil) = %v, want nil", got)
 	}
-	if got := yamlenv.SanitizeDecodeError(nil, yamlenv.WithUnknownKeyEcho()); got != nil {
-		t.Errorf("SanitizeDecodeError(nil, WithUnknownKeyEcho()) = %v, want nil", got)
+	if got := yamlenv.SanitizeDecodeError(nil, yamlenv.WithUnknownKeyEcho(true)); got != nil {
+		t.Errorf("SanitizeDecodeError(nil, WithUnknownKeyEcho(true)) = %v, want nil", got)
 	}
 }
 
@@ -174,7 +174,7 @@ func TestSanitizeDecodeErrorUnknownKey(t *testing.T) {
 
 	t.Run("WithUnknownKeyEcho keeps the key name and drops the type", func(t *testing.T) {
 		t.Parallel()
-		got := yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho()).Error()
+		got := yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho(true)).Error()
 		want := `unmarshal errors: line 5: unknown configuration key "anime_bytes"`
 		if got != want {
 			t.Errorf("SanitizeDecodeError(unknown key, echo) = %q, want %q", got, want)
@@ -184,13 +184,36 @@ func TestSanitizeDecodeErrorUnknownKey(t *testing.T) {
 		}
 	})
 
+	t.Run("WithUnknownKeyEcho(false) spells the default", func(t *testing.T) {
+		t.Parallel()
+		got := yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho(false)).Error()
+		want := "unmarshal errors: line 5: unknown configuration key <redacted>"
+		if got != want {
+			t.Errorf("SanitizeDecodeError(unknown key, echo=false) = %q, want the no-option default %q", got, want)
+		}
+	})
+
+	t.Run("the last repeated option wins", func(t *testing.T) {
+		t.Parallel()
+		redacted := yamlenv.SanitizeDecodeError(typeErr,
+			yamlenv.WithUnknownKeyEcho(true), yamlenv.WithUnknownKeyEcho(false)).Error()
+		if strings.Contains(redacted, "anime_bytes") {
+			t.Errorf("SanitizeDecodeError(echo=true, echo=false) = %q, want the later false to win", redacted)
+		}
+		echoed := yamlenv.SanitizeDecodeError(typeErr,
+			yamlenv.WithUnknownKeyEcho(false), yamlenv.WithUnknownKeyEcho(true)).Error()
+		if !strings.Contains(echoed, `unknown configuration key "anime_bytes"`) {
+			t.Errorf("SanitizeDecodeError(echo=false, echo=true) = %q, want the later opt-in to win", echoed)
+		}
+	})
+
 	t.Run("multiple entries join with semicolons", func(t *testing.T) {
 		t.Parallel()
 		multi := &yaml.TypeError{Errors: []string{
 			"line 5: field anime_bytes not found in type main.fileConfig",
 			"line 6: field animebytes not found in type main.filtersConfig",
 		}}
-		got := yamlenv.SanitizeDecodeError(multi, yamlenv.WithUnknownKeyEcho()).Error()
+		got := yamlenv.SanitizeDecodeError(multi, yamlenv.WithUnknownKeyEcho(true)).Error()
 		want := `unmarshal errors: line 5: unknown configuration key "anime_bytes"; ` +
 			`line 6: unknown configuration key "animebytes"`
 		if got != want {
@@ -246,7 +269,7 @@ func TestSanitizeDecodeErrorExcerptCollisions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			typeErr := &yaml.TypeError{Errors: []string{entry}}
-			got := yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho()).Error()
+			got := yamlenv.SanitizeDecodeError(typeErr, yamlenv.WithUnknownKeyEcho(true)).Error()
 			if strings.Contains(got, secret) || strings.Contains(got, "oops") {
 				t.Errorf("SanitizeDecodeError(colliding excerpt) leaks excerpt content: %q", got)
 			}
@@ -321,7 +344,7 @@ func TestSanitizeDecodeErrorRealYAMLErrors(t *testing.T) {
 		if strings.Contains(redacted, "nam") {
 			t.Errorf("default sanitization leaks the unknown key: %q", redacted)
 		}
-		echoed := yamlenv.SanitizeDecodeError(err, yamlenv.WithUnknownKeyEcho()).Error()
+		echoed := yamlenv.SanitizeDecodeError(err, yamlenv.WithUnknownKeyEcho(true)).Error()
 		if !strings.Contains(echoed, `unknown configuration key "nam"`) {
 			t.Errorf("echoed sanitization = %q, want the key name kept", echoed)
 		}

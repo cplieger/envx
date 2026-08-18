@@ -1,4 +1,4 @@
-module github.com/cplieger/envx/yamlenv
+module github.com/cplieger/envx/yamlenv/v2
 
 go 1.26.7
 

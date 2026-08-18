@@ -1,6 +1,7 @@
 package envx_test
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"time"
@@ -14,7 +15,10 @@ func Example() {
 	defer os.Unsetenv("APP_LISTEN")
 	defer os.Unsetenv("APP_DEBUG")
 
-	addr := envx.String("APP_LISTEN", ":8080")
+	// String takes no fallback, so there is no argument order to get wrong;
+	// cmp.Or composes the default, and treats an empty value as absent
+	// exactly as the parsing getters do.
+	addr := cmp.Or(envx.String("APP_LISTEN"), ":8080")
 	debug := envx.Bool("APP_DEBUG", false)
 	interval := envx.Duration("APP_INTERVAL", 6*time.Hour)
 

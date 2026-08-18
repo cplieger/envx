@@ -1,6 +1,7 @@
 package envx
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"strings"
@@ -77,8 +78,8 @@ func TestString(t *testing.T) {
 			if tt.set {
 				t.Setenv("ENVX_TEST_STRING", tt.value)
 			}
-			if got := String("ENVX_TEST_STRING", tt.fallback); got != tt.want {
-				t.Errorf("String() = %q, want %q", got, tt.want)
+			if got := cmp.Or(String("ENVX_TEST_STRING"), tt.fallback); got != tt.want {
+				t.Errorf("cmp.Or(String(), %q) = %q, want %q", tt.fallback, got, tt.want)
 			}
 		})
 	}

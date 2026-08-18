@@ -16,8 +16,10 @@ surface is three ideas:
   silently; set-but-malformed falls back with one `slog` Warn naming the key,
   the raw value, the expected kind, and the fallback used. Every getter takes
   its variable name as a `Key`, validated on first use — a key that is not an
-  environment-variable name panics, naming the likely key/fallback
-  transposition (a programmer error at the call site, caught at boot).
+  environment-variable name panics, naming the offending string (a programmer
+  error at the call site, caught at boot). `String` takes no fallback at all,
+  so the key/fallback transposition cannot be written; `cmp.Or` composes the
+  default.
   Empty-equals-unset is deliberate (compose files materialize `KEY=` for
   blank knobs); tolerant `Bool` spellings (`true/1/yes/on`, `false/0/no/off`)
   are deliberate (that is what deployment YAML contains). The strict variants

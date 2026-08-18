@@ -1,6 +1,7 @@
 package envx
 
 import (
+	"cmp"
 	"errors"
 	"os"
 	"strings"
@@ -43,7 +44,7 @@ func TestSourceAgreesWithPackageGetters(t *testing.T) {
 				if tc.set {
 					t.Setenv(key, tc.val)
 				}
-				if got, want := src.String(key, "fb"), String(key, "fb"); got != want {
+				if got, want := src.String(key), String(key); got != want {
 					t.Errorf("Source.String = %q, package String = %q", got, want)
 				}
 				if got, want := src.Bool(key, true), Bool(key, true); got != want {
@@ -112,14 +113,14 @@ func TestSourceReadsThroughTheInjectedGetter(t *testing.T) {
 	t.Setenv("FAKE_STRING", "from-process-env")
 
 	rec := captureWarns(t)
-	if got := src.String("FAKE_STRING", "fb"); got != "value" {
+	if got := src.String("FAKE_STRING"); got != "value" {
 		t.Errorf("String = %q, want the injected source's %q", got, "value")
 	}
-	if got := src.String("FAKE_UNSET", "fb"); got != "fb" {
-		t.Errorf("String(unset) = %q, want the fallback", got)
+	if got := cmp.Or(src.String("FAKE_UNSET"), "fb"); got != "fb" {
+		t.Errorf("cmp.Or(String(unset), \"fb\") = %q, want the fallback", got)
 	}
-	if got := src.String("FAKE_EMPTY", "fb"); got != "fb" {
-		t.Errorf("String(empty) = %q, want the fallback: empty equals unset through an injected source too", got)
+	if got := cmp.Or(src.String("FAKE_EMPTY"), "fb"); got != "fb" {
+		t.Errorf("cmp.Or(String(empty), \"fb\") = %q, want the fallback: empty equals unset through an injected source too", got)
 	}
 	if got := src.Bool("FAKE_BOOL", false); !got {
 		t.Error("Bool = false, want the injected ' On ' parsed true (trim + tolerant spellings apply)")

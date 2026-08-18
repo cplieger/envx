@@ -1,7 +1,6 @@
 package envx
 
 import (
-	"cmp"
 	"fmt"
 	"os"
 	"strconv"
@@ -43,11 +42,12 @@ func (s Source) getenv(key Key) string {
 	return s.Get(string(key))
 }
 
-// String returns the value of the environment variable key, or fallback when
-// the variable is unset or empty, with the package-level String's exact
-// semantics: no trimming, whitespace-only counts as set.
-func (s Source) String(key Key, fallback string) string {
-	return cmp.Or(s.getenv(key), fallback)
+// String returns the value of the environment variable key, empty when the
+// variable is unset or empty, with the package-level String's exact
+// semantics: no trimming, whitespace-only counts as set, and the default is
+// the caller's to compose with cmp.Or.
+func (s Source) String(key Key) string {
+	return s.getenv(key)
 }
 
 // Require returns the value of the environment variable key, or a

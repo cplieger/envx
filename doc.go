@@ -10,10 +10,15 @@
 // because that is what deployment YAML tends to contain.
 //
 // The one thing a getter refuses at run time is a malformed KEY: a Key that
-// is not an environment-variable name panics on first use, naming the string
-// and the likely cause (key and fallback transposed at the call site). That
-// is a programmer error caught at startup, not a data error — see Key for the
-// two-layer contract and its residual gap.
+// is not an environment-variable name panics on first use, naming the string.
+// A typo would otherwise read as a permanently unset variable, so that is a
+// programmer error caught at startup, not a data error — see [Key] for the
+// two-layer contract.
+//
+// [String] takes no fallback: a (key, fallback string) pair was two adjacent
+// strings a caller could transpose, so the default is composed at the call
+// site with cmp.Or. The parsing getters keep their fallback, whose type
+// differs from the key's.
 //
 // Two calls handle the values an app cannot default: Require returns an error
 // for a missing mandatory variable, and Secret additionally supports the

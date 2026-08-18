@@ -10,14 +10,20 @@
 
 A tiny reader for the way containerized apps are actually configured:
 environment variables with sensible defaults. Every getter takes its
-variable's name as a typed `Key` plus a fallback, and never fails on the
-environment's content. An unset or empty variable falls back silently; a
+variable's name as a typed `Key`, and never fails on the environment's
+content. An unset or empty variable yields the default silently; a
 set-but-malformed value falls back with one `slog` Warn naming the variable,
 so a deployment typo shows up in the logs instead of silently changing
 behavior. The one thing a getter refuses is a malformed KEY: a key that is
-not an environment-variable name panics on first use, naming the string and
-the likely cause — key and fallback transposed at the call site — so the
-classic silent swap becomes a deterministic boot failure.
+not an environment-variable name panics on first use, naming the string, so a
+typo cannot read as a permanently unset variable.
+
+`String` takes no fallback. A `(key, fallback string)` pair is two adjacent
+strings, so a transposed call read the fallback as a variable name and
+returned the name as the value, silently and forever; compose the default with
+[`cmp.Or`](https://pkg.go.dev/cmp#Or), which is what the two-parameter form
+did internally. The parsing getters keep their fallback because its type
+differs from the key's, so no transposition compiles.
 
 Two calls cover the values an app cannot default: `Require` returns a typed
 error for a missing mandatory variable, and `Secret` adds the Docker secrets
@@ -49,16 +55,14 @@ go get github.com/cplieger/envx/v2@latest
 ## Usage
 
 ```go
-addr := envx.String("APP_LISTEN", ":8080")
+addr := cmp.Or(envx.String("APP_LISTEN"), ":8080")
 debug := envx.Bool("APP_DEBUG", false)          // true/1/yes/on · false/0/no/off
 retries := envx.Int("APP_RETRIES", 3)
 interval := envx.Duration("APP_INTERVAL", 6*time.Hour) // Go duration syntax
 
-// The classic transposition panics at first use instead of silently
-// returning the key as the value:
-//	envx.String(":8080", "APP_LISTEN")
-//	→ panic: envx: ":8080" is not an environment variable name;
-//	  did you swap key and fallback?
+// A malformed key panics at first use instead of reading as unset forever:
+//	envx.String("APP LISTEN")
+//	→ panic: envx: "APP LISTEN" is not an environment variable name
 
 token, err := envx.Require("APP_TOKEN") // *envx.MissingError when unset/empty
 if err != nil {
@@ -118,9 +122,9 @@ different policy and are documented individually below.
 
 ## API
 
-- `Key`: the NAME of an environment variable, the type every getter takes its key as. Untyped literals convert implicitly (existing call sites compile unchanged), so the compile-time guard covers variable-passing sites only; the load-bearing guard is first-use validation — a `Key` outside the name grammar (`[A-Za-z_][A-Za-z0-9_]*`, never empty; deliberately narrower than what a kernel tolerates) panics with a message naming the string (capped at 64 bytes) and the likely key/fallback transposition. A swap whose fallback happens to be a valid name is the documented residual neither layer can catch.
+- `Key`: the NAME of an environment variable, the type every getter takes its key as. Untyped literals convert implicitly, so the compile-time guard covers variable-passing sites only; the load-bearing guard is first-use validation — a `Key` outside the name grammar (`[A-Za-z_][A-Za-z0-9_]*`, never empty; deliberately narrower than what a kernel tolerates) panics with a message naming the string (capped at 64 bytes). The key/fallback transposition the type was first introduced for is closed by the signatures instead: `String` takes no fallback, and the parsing getters' fallbacks are typed.
 - `Source{Get func(string) string}`: the getters below over an injected environment reader, for the `run(os.Args, os.Getenv)` testable-main shape. `os.Getenv` satisfies `Get` as-is; the zero `Source` reads the process environment, and the package-level getters are exactly the zero `Source`'s methods, so semantics cannot drift between the two forms.
-- `String(key Key, fallback string) string`: value or fallback; empty counts as unset.
+- `String(key Key) string`: the value, empty when unset or empty. Takes no fallback, so there is no argument order to get wrong; compose the default with `cmp.Or(envx.String("K"), "default")`.
 - `Bool(key Key, fallback bool) bool`: tolerant parse (`true/1/yes/on`, `false/0/no/off`, case-insensitive, trimmed); malformed → Warn + fallback.
 - `Int(key Key, fallback int) int`: `strconv.Atoi` on the trimmed value; malformed → Warn + fallback.
 - `Duration(key Key, fallback time.Duration) time.Duration`: `time.ParseDuration` syntax (`30s`, `6h`, `1h30m`); a bare unitless number is rejected (ambiguous) → Warn + fallback.
@@ -148,7 +152,7 @@ shapes, the probe's value-error filtering) are in the package documentation:
 
 ## Behavior contract
 
-- **A malformed key is a boot-time panic, not a fallback.** Every getter validates its `Key` on first use and panics when it is not an environment-variable name, naming the offending string and the likely key/fallback transposition. This is the `regexp.MustCompile` class — a programmer error at a (usually literal) call site, deterministic from the first read — and it is deliberately distinct from the never-panic rule for the environment's CONTENT below, which the operator controls.
+- **A malformed key is a boot-time panic, not a fallback.** Every getter validates its `Key` on first use and panics when it is not an environment-variable name, naming the offending string. A typo (`APP LISTEN`, `app.listen`) or a badly built dynamic name would otherwise read as a permanently unset variable and return a default forever. This is the `regexp.MustCompile` class — a programmer error at a (usually literal) call site, deterministic from the first read — and it is deliberately distinct from the never-panic rule for the environment's CONTENT below, which the operator controls.
 - **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters. The one distinction the package answers itself is a blank `KEY_FILE` (`IsBlankSecretFilePath`): that variable holds a pointer, not a value, so its blankness is a statement about this package's own channel selection rather than about the app's value semantics.
 - **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`BoolStrict`, `IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log; the caller owns the decision, which is also the way to read a key whose value could turn out to be sensitive.
 - **A tolerant getter and its strict variant share one parser.** `Bool`/`BoolStrict`, `Int`/`IntStrict` and `Duration`/`DurationStrict` accept exactly the same values by construction, not by convention, so the two layers cannot drift apart; only the malformed-value policy differs (Warn + fallback, or an error).
@@ -168,8 +172,8 @@ Deliberate non-goals, not TODOs:
 | `.env` file loading | The container runtime (compose, Kubernetes) owns materializing the environment; a second loader creates precedence questions with no consumer need. |
 | Float / slice / map getters | No consumer parses these from the environment. Added only when a real app needs one. |
 | Prefix namespacing (`WithPrefix("APP_")`) | Key names stay greppable verbatim; a prefix helper saves a few characters and costs discoverability. |
-| Panic-on-missing (`MustX`) | `Require` returns an error so startup can report every missing variable at once instead of dying on the first. VALUES never panic; the one panic in this package is `Key`'s name-grammar check (below), which fires on a malformed KEY LITERAL — a programmer error in source, the `regexp.MustCompile` class — never on operator data. Do not "fix" that panic into a warn: a transposed key/fallback that only warned would silently read the wrong variable forever. |
-| Tolerating malformed key names | A `Key` that is not `[A-Za-z_][A-Za-z0-9_]*` panics at first read (usually boot; a lazily-read key fires later). Key names are compile-adjacent literals — all 69 fleet keys match the grammar — and the panic is what converts the classic swap (a URL/path/empty fallback in key position) into a deterministic failure instead of a silent wrong-variable read. |
+| Panic-on-missing (`MustX`) | `Require` returns an error so startup can report every missing variable at once instead of dying on the first. VALUES never panic; the one panic in this package is `Key`'s name-grammar check (below), which fires on a malformed KEY LITERAL — a programmer error in source, the `regexp.MustCompile` class — never on operator data. Do not "fix" that panic into a warn: a mistyped key that only warned would read as unset forever and hand back a default nobody chose. |
+| Tolerating malformed key names | A `Key` that is not `[A-Za-z_][A-Za-z0-9_]*` panics at first read (usually boot; a lazily-read key fires later). Key names are compile-adjacent literals — all 69 fleet keys match the grammar — and the panic is what converts a typo into a deterministic failure instead of a silent read of a variable that can never be set. |
 
 ## Contributing
 

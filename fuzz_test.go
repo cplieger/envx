@@ -54,23 +54,23 @@ func FuzzKeyValidation(f *testing.F) {
 	}
 	oracle := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	f.Fuzz(func(t *testing.T, s string) {
-		want := "envx: " + strconv.Quote(s) + " is not an environment variable name; did you swap key and fallback?"
+		want := "envx: " + strconv.Quote(s) + " is not an environment variable name"
 		defer func() {
 			r := recover()
 			if oracle.MatchString(s) {
 				if r != nil {
-					t.Fatalf("String(%q, ...) panicked on a valid name: %v", s, r)
+					t.Fatalf("String(%q) panicked on a valid name: %v", s, r)
 				}
 				return
 			}
 			if r == nil {
-				t.Fatalf("String(%q, ...) did not panic on an invalid name", s)
+				t.Fatalf("String(%q) did not panic on an invalid name", s)
 			}
 			if msg, ok := r.(string); !ok || msg != want {
 				t.Fatalf("panic = %v, want %q", r, want)
 			}
 		}()
-		_ = String(Key(s), "fallback")
+		_ = String(Key(s))
 	})
 }
 

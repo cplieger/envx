@@ -250,6 +250,58 @@ func TestLoadClassifiesUnmarshalerErrors(t *testing.T) {
 		return ok
 	}
 
+	t.Run("yaml's own non-TypeError decode errors never carry the type", func(t *testing.T) {
+		t.Parallel()
+		// These two are the whole reason classifyDecodeError keeps a textual
+		// leg. yaml.v3 raises every non-TypeError decode failure through
+		// failf, which panics with fmt.Errorf("yaml: "+format, …) — a bare
+		// *errors.errorString carrying NO exported type and, for most of the
+		// ~19 failf sites, NO "line N:" locator either. So the prefix is the
+		// only structural signal that separates them from an error the config
+		// type's own UnmarshalYAML returned verbatim.
+		//
+		// This is the gate on that assumption: if yaml.v3 ever rewords or
+		// drops the prefix, these fail loudly here instead of silently
+		// reclassifying every alias and binary fault as app-owned, which
+		// would withhold the diagnostic on the fail-closed path.
+		//
+		// Deliberately NOT matched with sanitize.go's parseLineRe: neither
+		// message carries a line locator, so the narrower pattern would
+		// misclassify both.
+		for _, tc := range []struct {
+			name   string
+			doc    string
+			secret string
+		}{
+			{"unknown anchor", "api_key: *nope\n", "nope"},
+			{"invalid base64", "api_key: !!binary |\n  @@@not-base64@@@\n", "not-base64"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				var cfg loadConfig
+				_, err := yamlenv.Load([]byte(tc.doc), &cfg, allowAppPrefix,
+					yamlenv.WithErrorPassthrough(claimUnmarshaler))
+				if err == nil {
+					t.Fatal("Load = nil, want yaml.v3's own decode error")
+				}
+				if _, ok := errors.AsType[*yaml.TypeError](err); ok {
+					t.Fatalf("err = %v, want a non-TypeError failure so the prefix arm is what classifies it", err)
+				}
+				if _, ok := errors.AsType[*yamlenv.UnmarshalerError](err); ok {
+					t.Errorf("yaml.v3's own %s error was classified app-owned: %v", tc.name, err)
+				}
+				// The consequence that makes the classification load-bearing:
+				// this caller claims UnmarshalerErrors through its
+				// passthrough, so a misclassification here would return
+				// yaml.v3's message UNSANITIZED and disclose the document
+				// fragment it names.
+				if strings.Contains(err.Error(), tc.secret) {
+					t.Errorf("err = %q, leaked the document fragment %q", err, tc.secret)
+				}
+			})
+		}
+	})
+
 	t.Run("app unmarshaler failure is claimable by type", func(t *testing.T) {
 		t.Parallel()
 		var cfg durConfig

@@ -51,8 +51,7 @@ func TestSecretWithSource_reports_the_channel(t *testing.T) {
 		t.Setenv("ENVX_SWS_FILE", "")
 
 		_, src, err := SecretWithSource("ENVX_SWS")
-		var missing *MissingError
-		if !errors.As(err, &missing) {
+		if _, ok := errors.AsType[*MissingError](err); !ok {
 			t.Errorf("SecretWithSource = %v, want *MissingError", err)
 		}
 		if src != SourceNone {
@@ -165,8 +164,7 @@ func TestSecretWithSource_blank_file_is_a_distinct_sentinel(t *testing.T) {
 	}
 	// Not a MissingError: the operator DID configure a file, and collapsing the two
 	// would hide a broken secret mount behind a caller's default for absence.
-	var missing *MissingError
-	if errors.As(err, &missing) {
+	if _, ok := errors.AsType[*MissingError](err); ok {
 		t.Error("blank file reported as *MissingError; a configured-but-blank file is not an absent one")
 	}
 	if src != SourceFile {
@@ -309,8 +307,7 @@ func TestIsBlankSecretFilePath_reports_without_changing_resolution(t *testing.T)
 		t.Setenv("ENVX_SWS_FILE", "")
 
 		_, src, err := SecretWithSource("ENVX_SWS")
-		var missing *MissingError
-		if !errors.As(err, &missing) || src != SourceNone {
+		if _, ok := errors.AsType[*MissingError](err); !ok || src != SourceNone {
 			t.Errorf("SecretWithSource = (%q, %v), want (%q, *MissingError)", src, err, SourceNone)
 		}
 		if !IsBlankSecretFilePath("ENVX_SWS") {

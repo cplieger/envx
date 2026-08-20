@@ -152,8 +152,8 @@ func TestSourceReadsThroughTheInjectedGetter(t *testing.T) {
 	if ok || err == nil {
 		t.Fatalf("IntStrict = (_, %v, %v), want a strict error", ok, err)
 	}
-	var perr *ParseError
-	if !errors.As(err, &perr) {
+	perr, ok := errors.AsType[*ParseError](err)
+	if !ok {
 		t.Fatalf("IntStrict error = %v, want *ParseError", err)
 	}
 	if perr.Key != "FAKE_BAD_INT" || perr.Value != "5x" {
@@ -182,8 +182,8 @@ func TestSourceRequire(t *testing.T) {
 		t.Errorf(`Source.Require("AUTH_TOKEN") = (%q, %v), want ("tok", nil)`, got, err)
 	}
 	_, err = src.Require("ABSENT")
-	var miss *MissingError
-	if !errors.As(err, &miss) || miss.Key != "ABSENT" {
+	miss, ok := errors.AsType[*MissingError](err)
+	if !ok || miss.Key != "ABSENT" {
 		t.Errorf(`Source.Require("ABSENT") error = %v, want *MissingError{Key: "ABSENT"}`, err)
 	}
 }

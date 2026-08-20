@@ -20,8 +20,8 @@ func TestRequire(t *testing.T) {
 	})
 	t.Run("unset returns MissingError", func(t *testing.T) {
 		_, err := Require("ENVX_TEST_REQ_UNSET")
-		var me *MissingError
-		if !errors.As(err, &me) {
+		me, ok := errors.AsType[*MissingError](err)
+		if !ok {
 			t.Fatalf("Require() error = %v, want *MissingError", err)
 		}
 		if me.Key != "ENVX_TEST_REQ_UNSET" {
@@ -49,8 +49,7 @@ func TestSecret(t *testing.T) {
 	})
 	t.Run("unset returns MissingError", func(t *testing.T) {
 		_, err := Secret("ENVX_TEST_SEC_UNSET")
-		var me *MissingError
-		if !errors.As(err, &me) {
+		if _, ok := errors.AsType[*MissingError](err); !ok {
 			t.Fatalf("Secret() error = %v, want *MissingError", err)
 		}
 	})
@@ -307,8 +306,8 @@ func TestSecret_OS_failure_keeps_the_PathError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Secret() = nil error for an absent file")
 	}
-	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) {
+	pathErr, ok := errors.AsType[*os.PathError](err)
+	if !ok {
 		t.Fatalf("Secret() = %v, want a reachable *os.PathError", err)
 	}
 	if !errors.Is(pathErr.Err, fs.ErrNotExist) {

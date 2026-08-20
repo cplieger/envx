@@ -277,8 +277,7 @@ func TestStrictErrorContract(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ENVX_TEST_STRICT_ERR") {
 		t.Errorf("IntStrict error does not name the key: %v", err)
 	}
-	var numErr *strconv.NumError
-	if !errors.As(err, &numErr) {
+	if _, ok := errors.AsType[*strconv.NumError](err); !ok {
 		t.Errorf("IntStrict error does not wrap *strconv.NumError: %v", err)
 	}
 
@@ -311,8 +310,8 @@ func TestParseErrorCarriesTheTrimmedValue(t *testing.T) {
 			t.Setenv(key, tc.set)
 
 			err := tc.parse(key)
-			var perr *ParseError
-			if !errors.As(err, &perr) {
+			perr, ok := errors.AsType[*ParseError](err)
+			if !ok {
 				t.Fatalf("error is not a *ParseError: %v", err)
 			}
 			if perr.Key != key {
@@ -345,8 +344,7 @@ func TestBoolStrictReturnsNoParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("BoolStrict accepted a malformed value")
 	}
-	var perr *ParseError
-	if errors.As(err, &perr) {
+	if perr, ok := errors.AsType[*ParseError](err); ok {
 		t.Errorf("BoolStrict returned a *ParseError carrying Value %q; it must never echo the value", perr.Value)
 	}
 	if strings.Contains(err.Error(), "s3cret-ish") {

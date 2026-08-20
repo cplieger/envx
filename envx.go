@@ -77,7 +77,14 @@ func Duration(key Key, fallback time.Duration) time.Duration {
 // (ok=false, no error), then parse. It returns the trimmed raw value for the
 // tolerant layer's Warn diagnostic. Policy stays with the callers:
 // warn-and-fallback in the getters, error-as-data in the strict variants.
-func parseEnv[T any](s Source, key Key, parse func(string) (T, error)) (value T, raw string, ok bool, err error) {
+//
+// It is a method with its own type parameter, which Go 1.27 permits. Before
+// that a method could not be generic, so the receiver had to be smuggled in as
+// a leading parameter — parseEnv(s, key, parse) — spelling a Source operation
+// as a free function over a Source. Nothing reaches this through an interface
+// (it is unexported, and the package declares no interface at all), so the rule
+// that an interface method may not have type parameters never applies here.
+func (s Source) parseEnv[T any](key Key, parse func(string) (T, error)) (value T, raw string, ok bool, err error) {
 	raw = strings.TrimSpace(s.getenv(key))
 	if raw == "" {
 		return value, "", false, nil

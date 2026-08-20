@@ -7,7 +7,7 @@ letting it grow into a configuration framework.
 ## Getters, not a framework
 
 `envx` is a package of typed getters over the process environment, with one
-dependency: `github.com/cplieger/pathinside` (itself standard-library-only)
+dependency: `github.com/cplieger/pathinside/v2` (itself standard-library-only)
 supplies the `KEY_FILE` path rule. Nothing is needed for the tests. The whole
 surface is three ideas:
 
@@ -15,7 +15,7 @@ surface is three ideas:
   never fail on the environment's content: unset or empty falls back
   silently; set-but-malformed falls back with one `slog` Warn naming the key,
   the raw value, the expected kind, and the fallback used. Every getter takes
-  its variable name as a `Key`, validated on first use — a key that is not an
+  its variable name as a `Key`, validated on first use; a key that is not an
   environment-variable name panics, naming the offending string (a programmer
   error at the call site, caught at boot). `String` takes no fallback at all,
   so the key/fallback transposition cannot be written; `cmp.Or` composes the
@@ -35,9 +35,9 @@ surface is three ideas:
   single-handle (no stat-then-open race), size-bounded (1 MB), traversal-
   rejected, and returned as written apart from at most one trailing line
   ending. The secret value never appears in an
-  error or log line. `SecretWithSource` additionally reports which channel
+  error or log line. `SecretWithSource` also reports which channel
   answered, and `IsBlankSecretFilePath` reports a `KEY_FILE` that is present
-  but blank — a pointer, unlike a value, is broken rather than absent when it
+  but blank; a pointer, unlike a value, is broken rather than absent when it
   is empty, and resolution is deliberately left unchanged so no existing
   deployment's behavior moves.
 
@@ -55,8 +55,9 @@ the README documents its surface.
 
 - A getter never fails and never exits on the environment's CONTENT;
   `Require`/`Secret` return errors and never exit. Process-lifecycle
-  decisions belong to the caller. The one panic is a malformed `Key` — a
-  call-site programmer error, not an environment state — caught on first use.
+  decisions belong to the caller. The one panic is a malformed `Key`, a
+  call-site programmer error rather than an environment state, caught on first
+  use.
 - Malformed values are visible (one Warn through `slog.Default()`) but never
   fatal, and `Secret` never routes a secret value through that Warn.
 - No state, no goroutines, no import-time environment reads.
@@ -79,5 +80,5 @@ and `FuzzSecretPath` in the root module; `FuzzExpand`, `FuzzLoad`,
 `FuzzSanitizeDecodeError`, and `FuzzCheckSingleDocument` in yamlenv); the
 Warn diagnostics are asserted through an in-package recording handler so the
 root module needs no test dependencies. CI (`ci / validate`) runs
-the same battery via the shared cplieger/ci workflows; conventional commits
+the same battery through the shared cplieger/ci workflows; conventional commits
 drive git-cliff release versioning.

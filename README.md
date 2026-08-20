@@ -18,20 +18,17 @@ behavior. The one thing a getter refuses is a malformed KEY: a key that is
 not an environment-variable name panics on first use, naming the string, so a
 typo cannot read as a permanently unset variable.
 
-`String` takes no fallback. A `(key, fallback string)` pair is two adjacent
-strings, so a transposed call read the fallback as a variable name and
-returned the name as the value, silently and forever; compose the default with
-[`cmp.Or`](https://pkg.go.dev/cmp#Or), which is what the two-parameter form
-did internally. The parsing getters keep their fallback because its type
-differs from the key's, so no transposition compiles.
+`String` takes no fallback: compose the default with
+[`cmp.Or`](https://pkg.go.dev/cmp#Or). The parsing getters keep their fallback
+because its type differs from the key's, so no getter in this package has two
+adjacent parameters a caller can swap.
 
 Two calls cover the values an app cannot default: `Require` returns a typed
 error for a missing mandatory variable, and `Secret` adds the Docker secrets
 convention (`KEY_FILE` pointing at a mounted file, read once, size-bounded,
 returned as written apart from one trailing line ending) on top. An app that
 threads its environment as a function value (`run(os.Args, os.Getenv)`) reads
-through a `Source` instead: the same getters over an injected getter, with
-the getters being exactly the zero `Source`.
+through a `Source` instead: the same getters over an injected getter.
 
 For apps configured by a YAML file rather than the environment, the
 `envx/yamlenv` subpackage expands allowlisted `${VAR}` references inside the
@@ -41,15 +38,20 @@ expanded document can embed a secret in its error message.
 `SanitizeDecodeError` closes it, rebuilding the error so it is safe to log
 at startup. yamlenv is its own nested Go module,
 versioned and released independently; it alone carries the YAML dependency,
-which the root `envx` module never links — plain `envx` requires only
-`github.com/cplieger/pathinside` (standard-library-only, and the source of the
-`KEY_FILE` path rule). Install yamlenv separately:
-`go get github.com/cplieger/envx/yamlenv/v2@vX.Y.Z`.
+which the root `envx` module never links; plain `envx` requires only
+`github.com/cplieger/pathinside/v2` (standard-library-only, and the source of
+the `KEY_FILE` path rule).
 
 ## Install
 
 ```sh
 go get github.com/cplieger/envx/v2@latest
+```
+
+yamlenv is a separate module, so install it separately:
+
+```sh
+go get github.com/cplieger/envx/yamlenv/v2@latest
 ```
 
 ## Usage
@@ -122,27 +124,27 @@ different policy and are documented individually below.
 
 ## API
 
-- `Key`: the NAME of an environment variable, the type every getter takes its key as. Untyped literals convert implicitly, so the compile-time guard covers variable-passing sites only; the load-bearing guard is first-use validation — a `Key` outside the name grammar (`[A-Za-z_][A-Za-z0-9_]*`, never empty; deliberately narrower than what a kernel tolerates) panics with a message naming the string (capped at 64 bytes). The key/fallback transposition the type was first introduced for is closed by the signatures instead: `String` takes no fallback, and the parsing getters' fallbacks are typed.
-- `Source{Get func(string) string}`: the getters below over an injected environment reader, for the `run(os.Args, os.Getenv)` testable-main shape. `os.Getenv` satisfies `Get` as-is; the zero `Source` reads the process environment, and the package-level getters are exactly the zero `Source`'s methods, so semantics cannot drift between the two forms.
+- `Key`: the NAME of an environment variable, the type every getter takes its key as. Untyped literals convert implicitly, so the compile-time guard covers variable-passing sites only; the effective guard is first-use validation: a `Key` outside the name grammar (`[A-Za-z_][A-Za-z0-9_]*`, never empty; deliberately narrower than what a kernel tolerates) panics with a message naming the string (capped at 64 bytes).
+- `Source{Get func(string) string}`: `String`, `Require`, `Bool`, `Int`, `Duration` and the three strict variants as methods over an injected environment reader, for the `run(os.Args, os.Getenv)` testable-main shape. The secret calls are not on it, because they also read files. `os.Getenv` satisfies `Get` as-is; the zero `Source` reads the process environment, and the package-level getters are exactly the zero `Source`'s methods, so semantics cannot drift between the two forms.
 - `String(key Key) string`: the value, empty when unset or empty. Takes no fallback, so there is no argument order to get wrong; compose the default with `cmp.Or(envx.String("K"), "default")`.
 - `Bool(key Key, fallback bool) bool`: tolerant parse (`true/1/yes/on`, `false/0/no/off`, case-insensitive, trimmed); malformed → Warn + fallback.
 - `Int(key Key, fallback int) int`: `strconv.Atoi` on the trimmed value; malformed → Warn + fallback.
 - `Duration(key Key, fallback time.Duration) time.Duration`: `time.ParseDuration` syntax (`30s`, `6h`, `1h30m`); a bare unitless number is rejected (ambiguous) → Warn + fallback.
-- `BoolStrict(key Key) (bool, bool, error)`: `Bool`'s parser with the result owned by the caller instead of Warn + fallback: unset/empty → `(false, false, nil)`, malformed → `(false, false, err)`, valid → `(b, true, nil)`. `ok`, not the value, distinguishes "set to false" from "not set". Never logs, and the error names the key and the accepted spellings but never the value. Prefer it over `Bool` for a key whose value may be sensitive — one an operator could wire to a secret by mistake, since `Bool`'s Warn line carries the raw value — or when the caller owns its own diagnostics.
+- `BoolStrict(key Key) (bool, bool, error)`: `Bool`'s parser with the result owned by the caller instead of Warn + fallback: unset/empty → `(false, false, nil)`, malformed → `(false, false, err)`, valid → `(b, true, nil)`. `ok`, not the value, distinguishes "set to false" from "not set". Never logs, and the error names the key and the accepted spellings but never the value. Prefer it over `Bool` for a key whose value can be sensitive (one an operator can wire to a secret by mistake, since `Bool`'s Warn line carries the raw value), or when the caller owns its own diagnostics.
 - `IntStrict(key Key) (int, bool, error)` / `DurationStrict(key Key) (time.Duration, bool, error)`: the parse result owned by the caller instead of Warn + fallback: unset/empty → `(0, false, nil)`, malformed → `(0, false, err)` naming the key, valid → `(v, true, nil)`. Never logs. A malformed value returns a `*ParseError` (see below).
-- `ParseError{Err, Key, Value}`: the malformed-value error from `IntStrict` / `DurationStrict`, detected with `errors.As`. `Value` is the **trimmed** value the parser rejected, so a caller quoting the rejected input needs no second `os.Getenv` — which returns the value untrimmed and can therefore name a string the parser never parsed. `Unwrap` exposes the underlying error, so `errors.As` still reaches `*strconv.NumError`. `BoolStrict` deliberately does **not** return it: that variant exists for a key whose value must never be echoed, and a typed error carrying the value would hand it to every caller that logs the error.
-- `Require(key Key) (string, error)`: value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error rather than exiting so a caller can collect every missing variable and fail once.
+- `ParseError{Err, Key, Value}`: the malformed-value error from `IntStrict` / `DurationStrict`, detected with `errors.As`. `Value` is the **trimmed** value the parser rejected, so a caller quoting the rejected input needs no second `os.Getenv`, which returns the value untrimmed and can therefore name a string the parser never parsed. `Unwrap` exposes the underlying error, so `errors.As` still reaches `*strconv.NumError`. `BoolStrict` deliberately does **not** return it: that variant exists for a key whose value must never be echoed, and a typed error carrying the value would hand it to every caller that logs the error.
+- `Require(key Key) (string, error)`: value, or `*MissingError` (carries `Key`) when unset or empty. Returns an error and never exits, so a caller can collect every missing variable and fail once.
 - `Secret(key Key) (string, error)`: `KEY_FILE` (mounted secret file: single-handle bounded read, 1 MB cap, traversal-rejected, with at most one trailing line ending removed) wins over `KEY`. The secret value never appears in an error or log line.
 - `SecretWithSource(key Key) (string, SecretSource, error)`: `Secret` plus the channel that supplied the value (`SourceFile`, `SourceEnv`, `SourceNone`), reported on the error paths too, so a caller can warn that a `KEY` it also set was ignored in favour of `KEY_FILE`.
-- `IsBlankSecretFilePath(key Key) bool`: reports a `KEY_FILE` that is present but blank (empty or whitespace only) and therefore names no file. Resolution is unchanged — it still falls through as if unset — but the caller can refuse it, which matters when the secret is optional and the fallthrough is fail-open.
+- `IsBlankSecretFilePath(key Key) bool`: reports a `KEY_FILE` that is present but blank (empty or whitespace only) and therefore names no file. Resolution is unchanged (it still falls through as if unset), but the caller can refuse it, which matters when the secret is optional and the fallthrough is fail-open.
 - `ErrBlankSecretFile`: the sentinel for a `KEY_FILE` naming a readable file whose content is blank (empty or whitespace only), so a caller's allow-empty policy can cover both delivery channels identically.
 - `ErrSecretFilePathRejected`, `ErrSecretFileTooLarge`, `ErrSecretFileGrew`, `ErrSecretFileUnreadable`: the remaining secret-file failure classes, each detectable with `errors.Is`, so a caller can report WHY the file was unusable without matching error text and without echoing the operator-supplied path (which is the leak risk when `KEY_FILE` was misconfigured to hold the secret itself). The OS-failure class keeps its `*os.PathError` reachable with `errors.As`.
 - `MissingError{Key}`: the typed missing-variable error, detectable with `errors.As`.
-- `yamlenv.Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error)`: the composed safe loading pipeline in one call: single-document check, unknown-key strictness, parse, `Expand` with the caller's allowlist, decode into `out` (a non-nil pointer pre-populated with defaults), and sanitized errors on every failure path. Options: `WithSanitizeOptions(...)` forwards sanitizer policy; `WithErrorPassthrough(pred)` returns caller-owned decode errors unchanged — they reach `pred` (and the caller) wrapped in `*UnmarshalerError`, so the recommended predicate is the `errors.As` type check, which can never claim one of yaml.v3's own errors.
+- `yamlenv.Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error)`: the composed safe loading pipeline in one call: single-document check, unknown-key strictness, parse, `Expand` with the caller's allowlist, decode into `out` (a non-nil pointer pre-populated with defaults), and sanitized errors on every failure path. Options: `WithSanitizeOptions(...)` forwards sanitizer policy; `WithErrorPassthrough(pred)` returns caller-owned decode errors unchanged; they reach `pred` (and the caller) wrapped in `*UnmarshalerError`, so the recommended predicate is the `errors.As` type check, which can never claim one of yaml.v3's own errors.
 - `yamlenv.UnmarshalerError{Err}`: the typed classification of a decode failure produced by the config type's OWN `UnmarshalYAML` (the analogue of `encoding/json.MarshalerError`), detected with `errors.As`. `Error()` returns the app's message verbatim and `Unwrap` exposes the original error; yaml.v3's own errors never carry the type, so a passthrough predicate keyed on it is structurally safe.
 - `yamlenv.Expand(root *yaml.Node, allow func(name string) bool) (unresolved []string)`: in-place expansion of allowlisted, set `${VAR}` references inside a parsed document's string scalar values; post-parse, so an environment value can never change the document structure; everything else stays byte-for-byte literal. Returns the allowlisted names left unresolved, for the caller to warn on.
 - `yamlenv.SanitizeDecodeError(err error, opts ...SanitizeOption) error`: rebuild a yaml.v3 parse or decode error from its value-independent structure (line numbers, source tags, destination types) so no fragment of a document value, possibly an expanded secret, survives into the message; `WithUnknownKeyEcho(true)` opts into keeping the unknown-key name (redacted by default; when the option repeats, the last one wins). The returned error never wraps the original.
-- `yamlenv.CheckUnknownKeys(data []byte, probe any) error`: fail loudly on a key the config type does not declare, via a `KnownFields(true)` re-decode of the raw pre-expansion document into `probe`. The returned error may embed document content; log it through `SanitizeDecodeError`.
+- `yamlenv.CheckUnknownKeys(data []byte, probe any) error`: fail loudly on a key the config type does not declare, through a `KnownFields(true)` re-decode of the raw pre-expansion document into `probe`. The returned error can embed document content; log it through `SanitizeDecodeError`.
 - `yamlenv.CheckSingleDocument(data []byte) error`: reject input carrying more than one YAML document, so nothing below a stray `---` separator is silently dropped. The only non-nil return is the static `ErrMultipleDocuments`, safe to log unsanitized.
 
 Full contracts (trim rules, the expansion grammar, the sanitizer's entry
@@ -152,12 +154,11 @@ shapes, the probe's value-error filtering) are in the package documentation:
 
 ## Behavior contract
 
-- **A malformed key is a boot-time panic, not a fallback.** Every getter validates its `Key` on first use and panics when it is not an environment-variable name, naming the offending string. A typo (`APP LISTEN`, `app.listen`) or a badly built dynamic name would otherwise read as a permanently unset variable and return a default forever. This is the `regexp.MustCompile` class — a programmer error at a (usually literal) call site, deterministic from the first read — and it is deliberately distinct from the never-panic rule for the environment's CONTENT below, which the operator controls.
+- **A malformed key is a boot-time panic, not a fallback.** Every getter validates its `Key` on first use and panics when it is not an environment-variable name, naming the offending string. Without that panic, a typo (`APP LISTEN`, `app.listen`) or a badly built dynamic name reads as a permanently unset variable and returns a default forever. This is the `regexp.MustCompile` class: a programmer error at a (usually literal) call site, deterministic from the first read. It is deliberately distinct from the never-panic rule for the environment's CONTENT below, which the operator controls.
 - **Empty equals unset.** Compose files and CI matrices routinely materialize `KEY=` for a knob the operator left blank; every getter treats that as absence. Use `os.LookupEnv` directly in the rare case the distinction matters. The one distinction the package answers itself is a blank `KEY_FILE` (`IsBlankSecretFilePath`): that variable holds a pointer, not a value, so its blankness is a statement about this package's own channel selection rather than about the app's value semantics.
 - **Malformed values are visible, never fatal.** The one Warn line (through `slog.Default()`) carries `key`, the raw `value`, the expected `kind`, and the `fallback` used. Config values are not secrets; `Secret` never routes through this path. The strict variants (`BoolStrict`, `IntStrict`, `DurationStrict`) return the malformed value as an error instead and never log; the caller owns the decision, which is also the way to read a key whose value could turn out to be sensitive.
 - **A tolerant getter and its strict variant share one parser.** `Bool`/`BoolStrict`, `Int`/`IntStrict` and `Duration`/`DurationStrict` accept exactly the same values by construction, not by convention, so the two layers cannot drift apart; only the malformed-value policy differs (Warn + fallback, or an error).
 - **Parsing getters trim; `String` does not.** `Bool`, `Int`, `Duration`, and the strict variants parse the whitespace-trimmed value; `String` returns the raw value because whitespace can be meaningful in a free-form string (a whitespace-only value counts as set).
-- **A rejected value comes back with the error, so nobody re-reads the environment.** `IntStrict` and `DurationStrict` already trimmed the value to parse it, so `*ParseError.Value` hands it back. Reaching for `os.Getenv(key)` again to build the diagnostic was never equivalent: it returns the value untrimmed, so a message could quote `" 5x "` beside a parse error about `5x`, and it reads the environment a second time to learn something the first read already knew.
 - **A secret is never rewritten.** Both `Secret` channels return the credential as configured: `KEY` verbatim, and `KEY_FILE`'s content with at most ONE trailing line ending (`\n` or `\r\n`) removed, because an editor or `kubectl create secret --from-file` appends one and a file cannot store a value without that ambiguity. Edge spaces, tabs, non-breaking spaces and a second trailing newline are content and survive, so a caller that validates a credential verbatim gets the same verdict from either channel. Blankness is the one judgement made on the trimmed content: a file holding only whitespace is `ErrBlankSecretFile`, a broken mount rather than a secret.
 - **An injected environment is the same environment.** `Source{Get: getenv}` runs the identical parsers, trim rules, Warn diagnostics, and key validation over the injected getter; the package-level getters ARE the zero `Source`. Nothing about the semantics depends on which form a caller uses.
 - **No state, no goroutines, no import-time reads.** The process environment is read at call time only.
@@ -172,8 +173,8 @@ Deliberate non-goals, not TODOs:
 | `.env` file loading | The container runtime (compose, Kubernetes) owns materializing the environment; a second loader creates precedence questions with no consumer need. |
 | Float / slice / map getters | No consumer parses these from the environment. Added only when a real app needs one. |
 | Prefix namespacing (`WithPrefix("APP_")`) | Key names stay greppable verbatim; a prefix helper saves a few characters and costs discoverability. |
-| Panic-on-missing (`MustX`) | `Require` returns an error so startup can report every missing variable at once instead of dying on the first. VALUES never panic; the one panic in this package is `Key`'s name-grammar check (below), which fires on a malformed KEY LITERAL — a programmer error in source, the `regexp.MustCompile` class — never on operator data. Do not "fix" that panic into a warn: a mistyped key that only warned would read as unset forever and hand back a default nobody chose. |
-| Tolerating malformed key names | A `Key` that is not `[A-Za-z_][A-Za-z0-9_]*` panics at first read (usually boot; a lazily-read key fires later). Key names are compile-adjacent literals — all 69 fleet keys match the grammar — and the panic is what converts a typo into a deterministic failure instead of a silent read of a variable that can never be set. |
+| Panic-on-missing (`MustX`) | `Require` returns an error so startup can report every missing variable at once instead of dying on the first. VALUES never panic; the one panic in this package is `Key`'s name-grammar check, below. |
+| Tolerating malformed key names | A `Key` that is not `[A-Za-z_][A-Za-z0-9_]*` panics at first read (usually boot; a lazily-read key fires later). Key names are compile-adjacent literals, and the panic is what converts a typo into a deterministic failure instead of a silent read of a variable that can never be set. Do not "fix" it into a warn: a mistyped key that only warned would read as unset forever and hand back a default nobody chose. |
 
 ## Contributing
 

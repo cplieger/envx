@@ -52,10 +52,17 @@ func TestMalformedKeyPanicMessage(t *testing.T) {
 // and returned the name as the value, silently and forever; the fix was to
 // delete the parameter rather than to detect the swap, since cmp.Or composes
 // the default and the two-parameter body was cmp.Or all along. Restoring a
-// second string parameter breaks this line.
+// second string parameter breaks these lines.
+//
+// The assertion is the PARAMETER type: passing each getter to a func(Key)
+// string parameter admits exactly that signature and nothing else. Spelling it
+// as `var _ func(Key) string = String` reads the same to a human but is a
+// declaration whose type an inference pass can drop, at which point it asserts
+// nothing at all — the pin has to be a position that cannot be inferred away.
 func TestStringTakesNoFallback(t *testing.T) {
-	var _ func(Key) string = String
-	var _ func(Key) string = Source{}.String
+	pin := func(func(Key) string) {}
+	pin(String)
+	pin(Source{}.String)
 }
 
 // TestMalformedKeyPanicsInEveryGetter sweeps the panic across the whole

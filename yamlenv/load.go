@@ -194,7 +194,7 @@ func checkUnknownKeysFiltered(data []byte, cfgType reflect.Type, o loadOptions) 
 	}
 	var unknown []string
 	for _, entry := range typeErr.Errors {
-		if _, _, ok := lineEntryBounds(entry, unknownKeyMarker, unknownKeyInType); ok {
+		if _, _, _, ok := lineEntryParts(entry, unknownKeyMarker, unknownKeyInType); ok {
 			unknown = append(unknown, entry)
 		}
 	}

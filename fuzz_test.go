@@ -30,8 +30,8 @@ func assertParseErrorValue(t *testing.T, err error, raw string) {
 	if err == nil {
 		return
 	}
-	var perr *ParseError
-	if !errors.As(err, &perr) {
+	perr, ok := errors.AsType[*ParseError](err)
+	if !ok {
 		t.Fatalf("strict variant returned a non-*ParseError for %q: %v", raw, err)
 	}
 	if want := strings.TrimSpace(raw); perr.Value != want {

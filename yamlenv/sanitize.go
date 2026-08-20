@@ -123,19 +123,35 @@ func SanitizeDecodeError(err error, opts ...SanitizeOption) error {
 	return errors.New("unmarshal errors: " + strings.Join(entries, "; "))
 }
 
-// lineEntryBounds locates one structured TypeError entry shape: startMarker
-// must appear after a bare "line N" prefix (the isLinePrefix guard — a
-// wrong-type scalar excerpt embedding the same marker pair starts with the
-// unmarshal shape instead, so it never matches) and endMarker must follow it.
-// It is the single home of the boundary validation the duplicate-key and
-// unknown-key branches of sanitizeEntry share.
-func lineEntryBounds(entry, startMarker, endMarker string) (start, end int, ok bool) {
-	start = strings.Index(entry, startMarker)
-	if start < 0 || !isLinePrefix(entry[:start]) {
-		return 0, 0, false
+// lineEntryParts splits one structured TypeError entry into its three
+// value-independent parts: the prefix before startMarker, the value-derived
+// middle between the markers, and the tail after endMarker. startMarker must
+// follow a bare "line N" prefix (the isLinePrefix guard — a wrong-type scalar
+// excerpt embedding the same marker pair starts with the unmarshal shape
+// instead, so it never matches), and endMarker must appear after it. It is the
+// single home of the boundary validation the duplicate-key and unknown-key
+// branches of sanitizeEntry share.
+//
+// endMarker is located with the LAST separator, because the excerpt between
+// the markers may itself contain it: the entry
+//
+//	line 3: mapping key "a already defined at line 5 b" already defined at line 1
+//
+// splits correctly only on its final separator — cutting on the first would
+// leave half the key inside the tail this function reports as
+// value-independent, which is a leak. Returning the parts rather than their
+// offsets is what keeps that guarantee legible: the middle IS the span that
+// gets redacted, so no caller adds a marker length to an index to find it.
+func lineEntryParts(entry, startMarker, endMarker string) (prefix, middle, suffix string, ok bool) {
+	prefix, rest, found := strings.Cut(entry, startMarker)
+	if !found || !isLinePrefix(prefix) {
+		return "", "", "", false
 	}
-	end = strings.LastIndex(entry, endMarker)
-	return start, end, end > start
+	middle, suffix, found = strings.CutLast(rest, endMarker)
+	if !found {
+		return "", "", "", false
+	}
+	return prefix, middle, suffix, true
 }
 
 // sanitizeEntry rebuilds one TypeError entry keeping only its
@@ -145,8 +161,9 @@ func lineEntryBounds(entry, startMarker, endMarker string) (start, end int, ok b
 // ("line N: field X not found in type T") drops the Go type name and keeps
 // the key name only under WithUnknownKeyEcho. A wrong-type entry keeps the
 // "line N: cannot unmarshal !!<tag>" prefix and the " into <type>" suffix;
-// strings.LastIndex locates the suffix so backticks or newlines inside the
-// scalar excerpt are irrelevant. All three shapes validate their kept prefix
+// every shape cuts its trailing marker at the LAST separator, so backticks or
+// newlines inside the scalar excerpt — and an excerpt that repeats the marker
+// itself — are irrelevant. All three shapes validate their kept prefix
 // through isLinePrefix: on the first two it ensures a wrong-type scalar
 // excerpt that happens to embed their marker pairs is never mistaken for
 // them (such an entry starts with the unmarshal shape, not a bare "line N",
@@ -156,41 +173,42 @@ func lineEntryBounds(entry, startMarker, endMarker string) (start, end int, ok b
 // entry always starts "line N: "). Anything matching no shape falls back to
 // a fixed message.
 func sanitizeEntry(entry string, o sanitizeOptions) string {
-	if k, at, ok := lineEntryBounds(entry, dupKeyMarker, dupKeyDefinedAt); ok {
-		return entry[:k] + ": mapping key <redacted>" + entry[at:]
+	if prefix, _, suffix, ok := lineEntryParts(entry, dupKeyMarker, dupKeyDefinedAt); ok {
+		return prefix + dupKeyMarker + "<redacted>" + dupKeyDefinedAt + suffix
 	}
-	if k, at, ok := lineEntryBounds(entry, unknownKeyMarker, unknownKeyInType); ok {
+	if prefix, key, _, ok := lineEntryParts(entry, unknownKeyMarker, unknownKeyInType); ok {
 		if o.echoUnknownKey {
-			return fmt.Sprintf("%s: unknown configuration key %q",
-				entry[:k], entry[k+len(unknownKeyMarker):at])
+			return fmt.Sprintf("%s: unknown configuration key %q", prefix, key)
 		}
-		return entry[:k] + ": unknown configuration key <redacted>"
+		return prefix + ": unknown configuration key <redacted>"
 	}
-	start := strings.Index(entry, unmarshalMarker)
-	end := strings.LastIndex(entry, intoMarker)
-	if start < 0 || end < start {
+	head, rest, found := strings.Cut(entry, unmarshalMarker)
+	if !found {
 		return wrongTypeMessage
 	}
-	if prefix, cut := strings.CutSuffix(entry[:start], ": "); !cut || !isLinePrefix(prefix) {
+	if linePrefix, cut := strings.CutSuffix(head, ": "); !cut || !isLinePrefix(linePrefix) {
 		return wrongTypeMessage
 	}
-	tagEnd := start + len(unmarshalMarker)
-	for tagEnd < len(entry) && entry[tagEnd] != ' ' {
-		tagEnd++
+	excerpt, destType, found := strings.CutLast(rest, intoMarker)
+	if !found {
+		return wrongTypeMessage
 	}
-	return entry[:tagEnd] + " <redacted>" + entry[end:]
+	// The source tag is the excerpt's first space-delimited token ("str" in
+	// "str `value`"); everything after it is the value and is dropped.
+	tag, _, _ := strings.Cut(excerpt, " ")
+	return head + unmarshalMarker + tag + " <redacted>" + intoMarker + destType
 }
 
 // isLinePrefix reports whether s is exactly "line <digits>", the prefix a
 // genuine yaml.v3 TypeError entry carries before its first marker. It guards
 // every rebuild that keeps text from the entry: the duplicate-key branch
-// (keeps entry[:k] and entry[at:]) and the unknown-key branch (may keep the
+// (keeps the prefix and the tail) and the unknown-key branch (may keep the
 // key name between its markers) against a wrong-type scalar excerpt
 // embedding the same marker pair — that entry's prefix is the unmarshal shape
 // ("line N: cannot unmarshal !!str `..."), never a bare "line N" — and the
-// wrong-type branch (keeps entry[:tagEnd], minus the ": " separator its
-// marker excludes) against a hand-built TypeError entry carrying crafted
-// prefix text.
+// wrong-type branch (keeps the head, minus the ": " separator its marker
+// excludes) against a hand-built TypeError entry carrying crafted prefix
+// text.
 func isLinePrefix(s string) bool {
 	digits, ok := strings.CutPrefix(s, "line ")
 	if !ok || digits == "" {

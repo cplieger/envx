@@ -68,7 +68,7 @@ func (s Source) Require(key Key) (string, error) {
 // semantics: tolerant spellings, one Warn through slog's default logger on a
 // malformed value.
 func (s Source) Bool(key Key, fallback bool) bool {
-	b, raw, ok, err := parseEnv(s, key, parseBool)
+	b, raw, ok, err := s.parseEnv(key, parseBool)
 	if err != nil {
 		warnMalformed(key, raw, "boolean", fallback)
 		return fallback
@@ -83,7 +83,7 @@ func (s Source) Bool(key Key, fallback bool) bool {
 // when the variable is unset or empty, with the package-level Int's exact
 // semantics: one Warn through slog's default logger on a malformed value.
 func (s Source) Int(key Key, fallback int) int {
-	n, raw, ok, err := parseEnv(s, key, strconv.Atoi)
+	n, raw, ok, err := s.parseEnv(key, strconv.Atoi)
 	if err != nil {
 		warnMalformed(key, raw, "integer", fallback)
 		return fallback
@@ -100,7 +100,7 @@ func (s Source) Int(key Key, fallback int) int {
 // rejected, and a malformed value logs one Warn through slog's default
 // logger.
 func (s Source) Duration(key Key, fallback time.Duration) time.Duration {
-	d, raw, ok, err := parseEnv(s, key, time.ParseDuration)
+	d, raw, ok, err := s.parseEnv(key, time.ParseDuration)
 	if err != nil {
 		warnMalformed(key, raw, "duration", fallback)
 		return fallback
@@ -119,7 +119,7 @@ func (s Source) Duration(key Key, fallback time.Duration) time.Duration {
 // (value and ok share their bool type in the signature at the linter's
 // insistence; they mean what the family's other strict variants mean.)
 func (s Source) BoolStrict(key Key) (value, ok bool, err error) {
-	b, _, ok, err := parseEnv(s, key, parseBool)
+	b, _, ok, err := s.parseEnv(key, parseBool)
 	if err != nil {
 		return false, false, fmt.Errorf("environment variable %s: %w", key, err)
 	}
@@ -131,7 +131,7 @@ func (s Source) BoolStrict(key Key) (value, ok bool, err error) {
 // exact semantics: never logs, and a malformed value returns a *ParseError
 // carrying the key and the trimmed value.
 func (s Source) IntStrict(key Key) (value int, ok bool, err error) {
-	n, raw, ok, err := parseEnv(s, key, strconv.Atoi)
+	n, raw, ok, err := s.parseEnv(key, strconv.Atoi)
 	if err != nil {
 		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}
@@ -143,7 +143,7 @@ func (s Source) IntStrict(key Key) (value int, ok bool, err error) {
 // package-level DurationStrict's exact semantics: never logs, and a malformed
 // value returns a *ParseError carrying the key and the trimmed value.
 func (s Source) DurationStrict(key Key) (value time.Duration, ok bool, err error) {
-	d, raw, ok, err := parseEnv(s, key, time.ParseDuration)
+	d, raw, ok, err := s.parseEnv(key, time.ParseDuration)
 	if err != nil {
 		return 0, false, &ParseError{Key: key, Value: raw, Err: err}
 	}

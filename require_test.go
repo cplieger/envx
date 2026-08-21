@@ -121,6 +121,34 @@ func TestSecret(t *testing.T) {
 	})
 }
 
+// TestSecret_file_exactly_at_the_size_limit_is_read_whole pins the size gate at
+// its boundary. The ceiling exists to refuse a device file or a runaway log, so
+// a real secret whose length lands exactly on it is content rather than an
+// overrun, and a gate that refused it would reject the largest file the limit
+// was written to allow. Both gates see that same length — the pre-read stat and
+// the post-read re-check that catches a file growing underneath the read — so
+// the value arriving whole is what says neither one is off by a byte.
+func TestSecret_file_exactly_at_the_size_limit_is_read_whole(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "atlimit")
+	secret := strings.Repeat("s", maxSecretFileSize)
+	if err := os.WriteFile(p, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ENVX_TEST_SEC", "from-env")
+	t.Setenv("ENVX_TEST_SEC_FILE", p)
+
+	got, err := Secret("ENVX_TEST_SEC")
+	if err != nil {
+		t.Fatalf("Secret() for a %d byte file = %v, want the content: the limit is a ceiling, not an exclusive bound", maxSecretFileSize, err)
+	}
+	if len(got) != maxSecretFileSize {
+		t.Errorf("Secret() returned %d bytes, want %d", len(got), maxSecretFileSize)
+	}
+	if got != secret {
+		t.Errorf("Secret() returned %d bytes differing from the file content, want it read whole and unaltered", len(got))
+	}
+}
+
 // TestSecret_failure_classes_are_nameable pins the reason the class sentinels exist: a
 // caller must be able to say WHY a secret file was unusable without matching this
 // package's error text and without echoing the operator-supplied path, which is the one

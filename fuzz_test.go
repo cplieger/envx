@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // silenceWarns installs a discard logger for fuzz iterations; the fuzz
@@ -41,20 +42,34 @@ func assertParseErrorValue(t *testing.T, err error, raw string) {
 
 // FuzzKeyValidation pins Key's name grammar against a regexp oracle across
 // the whole input space: a getter panics on exactly the strings the POSIX
-// name grammar ([A-Za-z_][A-Za-z0-9_]*) rejects, with the exact
-// transposition-naming message, and never panics on a name the grammar
-// accepts. String carries the probe: it has no parse and no Warn, so the
-// validation is the only thing exercised.
+// name grammar ([A-Za-z_][A-Za-z0-9_]*) rejects, and never panics on a name
+// the grammar accepts. String carries the probe: it has no parse and no Warn,
+// so the validation is the only thing exercised.
+//
+// The panic MESSAGE is checked as properties rather than rebuilt, because it is
+// capped at keyEchoMax bytes and the earlier version of this target rebuilt it
+// with strconv.Quote alone — so every key whose quote exceeded the cap read as
+// a wording regression, which is what the weekly fuzz reported. Below the cap
+// the exact-naming contract still holds and is asserted exactly; above it, what
+// the message must guarantee is that the echo is bounded, is a well-formed Go
+// literal, is valid UTF-8, and names a genuine prefix of the offending key.
 func FuzzKeyValidation(f *testing.F) {
 	for _, s := range []string{
 		"", "A", "_", "APP_PORT", "127.0.0.1:7681", "1PORT", "APP-KEY",
 		"app key", ":8080", "6h", "${APP}", "🚀", "a\x00b", "line\n", " PAD ",
+		// Over-cap keys whose quoted form a byte cut would break: a run of
+		// escapes (each byte renders as "\xNN", so the cap lands mid-escape),
+		// and multi-byte runes straddling the cap in all three widths.
+		strings.Repeat("\xff", 20),
+		strings.Repeat("a", 58) + "\u00e9" + "!",
+		strings.Repeat("a", 59) + "\u0c0b" + "!",
+		strings.Repeat("a", 60) + "\U0001f680" + "!",
+		strings.Repeat("k", 200),
 	} {
 		f.Add(s)
 	}
 	oracle := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	f.Fuzz(func(t *testing.T, s string) {
-		want := "envx: " + strconv.Quote(s) + " is not an environment variable name"
 		defer func() {
 			r := recover()
 			if oracle.MatchString(s) {
@@ -66,8 +81,45 @@ func FuzzKeyValidation(f *testing.F) {
 			if r == nil {
 				t.Fatalf("String(%q) did not panic on an invalid name", s)
 			}
-			if msg, ok := r.(string); !ok || msg != want {
-				t.Fatalf("panic = %v, want %q", r, want)
+			msg, ok := r.(string)
+			if !ok {
+				t.Fatalf("panic value = %v (%T), want a string message", r, r)
+			}
+			const prefix, suffix = "envx: ", " is not an environment variable name"
+			echoed, cut := strings.CutPrefix(msg, prefix)
+			if !cut {
+				t.Fatalf("panic %q does not start with %q", msg, prefix)
+			}
+			echoed, cut = strings.CutSuffix(echoed, suffix)
+			if !cut {
+				t.Fatalf("panic %q does not end with %q", msg, suffix)
+			}
+			if len(echoed) > keyEchoMax {
+				t.Fatalf("echoed name %q is %d bytes, want at most %d", echoed, len(echoed), keyEchoMax)
+			}
+			if !utf8.ValidString(echoed) {
+				t.Fatalf("echoed name %q is not valid UTF-8; the cap split a rune", echoed)
+			}
+			unquoted, err := strconv.Unquote(echoed)
+			if err != nil {
+				t.Fatalf("echoed name %q is not a Go quoted string: %v; the cap split an escape", echoed, err)
+			}
+			// Under the cap the message names the key EXACTLY — the contract a
+			// caller reads to find the offending literal.
+			if full := strconv.Quote(s); len(full) <= keyEchoMax {
+				if echoed != full {
+					t.Fatalf("echoed name %q, want the exact quote %q", echoed, full)
+				}
+				return
+			}
+			// Over the cap it names a marked prefix of the key, never something
+			// the key does not start with.
+			head, marked := strings.CutSuffix(unquoted, "...")
+			if !marked {
+				t.Fatalf("echoed name %q is truncated but carries no ellipsis", echoed)
+			}
+			if !strings.HasPrefix(s, head) {
+				t.Fatalf("echoed name %q unquotes to %q, which is not a prefix of the key %q", echoed, head, s)
 			}
 		}()
 		_ = String(Key(s))

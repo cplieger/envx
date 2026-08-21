@@ -29,6 +29,11 @@ import "strconv"
 //     usually-literal call site, deterministic from the first read.
 type Key string
 
+// keyEchoMax bounds the quoted key an invalid-name panic echoes. A dynamically
+// built name can be long or carry a value fragment, so 64 bytes names the
+// mistake without echoing the whole thing.
+const keyEchoMax = 64
+
 // validate panics when k is not an environment-variable name. Every getter
 // calls it before reading anything, so the panic surfaces at the first use of
 // the malformed key — at startup, where config code runs — rather than as a
@@ -36,15 +41,40 @@ type Key string
 // compile-time constant from the call site rather than operator data.
 func (k Key) validate() {
 	if !k.isName() {
-		quoted := strconv.Quote(string(k))
-		// Cap the echoed string: a dynamically built name can be long or
-		// carry a value fragment. 64 bytes names the mistake without echoing
-		// the whole thing.
-		if len(quoted) > 64 {
-			quoted = quoted[:64] + `..."`
-		}
-		panic("envx: " + quoted + " is not an environment variable name")
+		panic("envx: " + quoteCapped(string(k), keyEchoMax) + " is not an environment variable name")
 	}
+}
+
+// quoteCapped returns strconv.Quote(s), or — when that is longer than limit
+// bytes — the quote of the longest leading run of s that still fits with a
+// trailing ellipsis inside the closing quote. limit is assumed to be at least 5,
+// the width of the shortest truncated form.
+//
+// The cut is made on s and the quoting redone; it is never a byte slice of the
+// quoted string. Cutting the quoted form at an arbitrary byte lands inside an
+// escape sequence ("\xf" out of "\xff", which is no longer a Go literal) or
+// inside a multi-byte rune, and the panic message is both read by a person and
+// carried into a log store, so invalid UTF-8 there is a defect in two ways.
+// Re-quoting each candidate prefix runs only on the panic path, and the loop
+// stops at the first prefix that does not fit, so it costs nothing that matters.
+func quoteCapped(s string, limit int) string {
+	if quoted := strconv.Quote(s); len(quoted) <= limit {
+		return quoted
+	}
+	// A truncated echo is `"` + body + `..."`, which is len(ellipsis) bytes
+	// longer than strconv.Quote(prefix) — that already carries the closing quote.
+	const ellipsis = "..."
+	end := 0
+	// range over a string steps one rune at a time, and one byte at a time
+	// across invalid UTF-8, so every i is a boundary strconv.Quote renders whole.
+	for i := range s {
+		if len(strconv.Quote(s[:i]))+len(ellipsis) > limit {
+			break
+		}
+		end = i
+	}
+	quoted := strconv.Quote(s[:end])
+	return quoted[:len(quoted)-1] + ellipsis + `"`
 }
 
 // isName reports whether k matches the environment-variable name grammar

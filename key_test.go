@@ -46,6 +46,38 @@ func TestMalformedKeyPanicMessage(t *testing.T) {
 	mustPanicWith(t, want, func() { String("127.0.0.1:7681") })
 }
 
+// TestMalformedKeyPanicEchoIsBounded pins the two rules the echo budget is made
+// of, at the byte where they meet. A key whose quoted form fits the budget is
+// named in FULL — that is the exact-naming contract a caller reads to find the
+// offending literal, and it must still hold for a key that fills the budget
+// exactly. A longer key is named by the longest quoted prefix that still fits
+// once the ellipsis is inside the closing quote, so a dynamically built name
+// that came out as a whole connection string or a mount path names the mistake
+// without carrying the entire value into a log store.
+//
+// The two keys are sized against the budget deliberately: the first quotes to
+// exactly keyEchoMax bytes, the second to more, and both echoes are therefore
+// keyEchoMax bytes wide by different rules.
+func TestMalformedKeyPanicEchoIsBounded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		key  Key
+		want string
+	}{
+		"quoted_form_exactly_fills_the_budget": {
+			key:  "/run/secrets/production/postgres/appdb/password/current/tokens",
+			want: `envx: "/run/secrets/production/postgres/appdb/password/current/tokens" is not an environment variable name`,
+		},
+		"quoted_form_over_the_budget": {
+			key:  "postgres://user:password@db.internal.example.com:5432/appdb?sslmode=require",
+			want: `envx: "postgres://user:password@db.internal.example.com:5432/appdb..." is not an environment variable name`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mustPanicWith(t, tc.want, func() { String(tc.key) })
+		})
+	}
+}
+
 // TestStringTakesNoFallback is a compile-time pin on the signature that closes
 // the key/fallback transposition class. A (key, fallback string) String was
 // two adjacent strings, so a swapped call read the fallback as a variable name

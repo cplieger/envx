@@ -166,13 +166,18 @@ func Secret(key Key) (string, error) {
 //
 // The canonicality half means the string that is validated and the string that
 // is opened are the same bytes: a path that passes IS its own Clean form, so
-// the filepath.Clean below is a proven no-op, kept only for the taint checkers
-// that recognize it as this open's sanitizer.
+// the filepath.Clean below is a proven no-op, kept as a backstop in case the
+// guard above is ever weakened. It is NOT there to satisfy a taint checker:
+// gosec explicitly declines to treat Clean as a G703 sanitizer, because Clean
+// RESOLVES a ".." element rather than rejecting it (its analyzers/pathtraversal.go
+// names os.Root or a prefix check as the only real confinement). Only
+// filepath.Base, filepath.Rel and path.Base clear that analyzer, and none of the
+// three can be used here without discarding the directory the operator named.
 func readSecretFile(path string) ([]byte, error) {
 	if !pathinside.IsCanonical(path) || pathinside.HasDotDot(path) {
 		return nil, fmt.Errorf("%w (must be clean and contain no \"..\" path component): %s", ErrSecretFilePathRejected, path)
 	}
-	f, err := os.Open(filepath.Clean(path))
+	f, err := os.Open(filepath.Clean(path)) // #nosec G703 -- the guard above refuses a non-canonical path or a ".." component, so no traversal is reachable
 	if err != nil {
 		return nil, unreadableSecretFile(err)
 	}

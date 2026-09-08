@@ -3,6 +3,7 @@ package envx
 import (
 	"cmp"
 	"context"
+	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -48,16 +49,55 @@ func (r *recorder) count(sub string) int {
 	return n
 }
 
+// installDefaultLogger swaps slog's default handler for the duration of tb.
+//
+// slog.SetDefault also points the standard log package at the installed
+// handler, and it skips that redirect when the logger being installed carries
+// slog's own default handler. Reinstalling the previous logger therefore does
+// not undo the redirect, so the writer and flags are saved and restored
+// explicitly. slog goes back first: reinstalling a previous handler that is
+// not slog's default re-runs the redirect and would overwrite a log restore
+// done before it.
+func installDefaultLogger(tb testing.TB, h slog.Handler) {
+	tb.Helper()
+	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(h))
+	tb.Cleanup(func() {
+		slog.SetDefault(prev)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
+}
+
 // captureWarns swaps in a recording default logger for the test's duration.
 // Tests using it must not run in parallel (global logger state); env-var tests
 // already can't (t.Setenv forbids t.Parallel).
 func captureWarns(t *testing.T) *recorder {
 	t.Helper()
 	rec := &recorder{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(rec))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	installDefaultLogger(t, rec)
 	return rec
+}
+
+// TestCaptureWarnsRestoresLogGlobals pins the restore in installDefaultLogger:
+// the swap redirects the log package's writer and zeroes its flags, and the
+// cleanup must put both back.
+func TestCaptureWarnsRestoresLogGlobals(t *testing.T) {
+	wantWriter, wantFlags := log.Writer(), log.Flags()
+
+	t.Run("swap", func(t *testing.T) {
+		captureWarns(t)
+		if log.Writer() == wantWriter {
+			t.Fatal("captureWarns did not redirect log.Writer(); the restore under test would guard nothing")
+		}
+	})
+
+	if got := log.Writer(); got != wantWriter {
+		t.Errorf("log.Writer() after captureWarns cleanup = %#v, want the original %#v", got, wantWriter)
+	}
+	if got := log.Flags(); got != wantFlags {
+		t.Errorf("log.Flags() after captureWarns cleanup = %d, want %d", got, wantFlags)
+	}
 }
 
 func TestString(t *testing.T) {

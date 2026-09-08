@@ -16,9 +16,7 @@ import (
 // targets exercise the parse boundary, not the diagnostics.
 func silenceWarns(f *testing.F) {
 	f.Helper()
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	f.Cleanup(func() { slog.SetDefault(prev) })
+	installDefaultLogger(f, slog.NewTextHandler(io.Discard, nil))
 }
 
 // assertParseErrorValue pins the *ParseError contract across the whole input

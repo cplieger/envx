@@ -1,8 +1,6 @@
 # envx
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/envx/v2.svg)](https://pkg.go.dev/github.com/cplieger/envx/v2)
-[![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/envx)](https://github.com/cplieger/envx/blob/main/go.mod)
-[![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/envx/badges/mutation.json)](https://github.com/cplieger/envx/issues?q=label%3Agremlins-tracker)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/envx/v2.svg)](https://pkg.go.dev/github.com/cplieger/envx/v2) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/envx)](https://github.com/cplieger/envx/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/envx/badges/mutation.json)](https://github.com/cplieger/envx/issues?q=label%3Agremlins-tracker)
 
 > Typed environment-variable configuration for containerized Go apps
 

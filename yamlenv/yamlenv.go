@@ -1,48 +1,17 @@
 // Package yamlenv expands allowlisted ${VAR} environment-variable references
 // inside the string values of a parsed YAML document, so secrets can stay in
-// the environment (an .env file, a Docker secret) while the YAML file holds
-// structure.
+// the environment while the file holds structure.
 //
-// Expansion runs AFTER parsing, on string scalar values only. Expanding the
-// raw document text before parsing (os.Expand over the file bytes) lets an
-// environment value containing YAML syntax — a quote, a newline, a '#' — change
-// the document structure or truncate the value; post-parse expansion makes
-// that impossible by construction. Mapping keys and non-string scalars are
-// deliberately left untouched.
+// Expansion runs after parsing, on string scalars only, so an environment
+// value cannot change the document's structure. Only the braced form is
+// recognized; an unbraced $VAR, a rejected name and an unset variable stay
+// literal, and expansion is a single pass. SanitizeDecodeError strips value
+// excerpts (possibly expanded secrets) from yaml.v3 decode errors.
+// CheckUnknownKeys and CheckSingleDocument are the strict-load checks.
 //
-// Only the braced ${VAR} form is recognized. An unbraced $VAR, a reference the
-// allowlist rejects, and a reference to an unset variable are all kept
-// byte-for-byte literal, so a bare '$' inside a secret or URL is never
-// rewritten and an unset variable is never silently blanked. Expansion is a
-// single pass: a ${VAR} produced by an expanded value is not re-expanded.
-//
-// Expansion creates one hazard of its own, which SanitizeDecodeError closes:
-// after secrets are substituted into the document, a failing decode of it
-// produces yaml.v3 errors that embed a backtick-quoted excerpt of the
-// offending scalar — possibly an expanded secret — and such errors are
-// typically logged at startup. SanitizeDecodeError rebuilds a decode or parse
-// error from its value-independent structure (line numbers, source tags,
-// destination types) and withholds anything it cannot prove value-free, so
-// the error stays safe to log while remaining actionable.
-//
-// Two strict-load checks round out safe config loading, both run on the raw
-// pre-expansion bytes (expansion rewrites string values only, so it can
-// change neither which keys exist nor how many documents there are):
-// CheckUnknownKeys fails loudly on a key the config type does not declare,
-// instead of silently ignoring it while the intended setting stays at its
-// default, and CheckSingleDocument rejects a file whose content below a
-// stray "---" separator would otherwise be silently dropped by
-// first-document-only parsing.
-//
-// Load composes all of the above — the strict checks, parse, expansion,
-// decode, and fail-closed sanitization — into one call that owns the safety
-// ordering, and is the recommended default path. The primitives stay
-// exported for callers whose policy the pipeline does not fit.
-//
-// This package is its own nested Go module on purpose: it is the one part of
-// envx that needs a YAML dependency, so the dependency lives in this module's
-// go.mod (the root envx module is zero-require), it is released independently
-// as yamlenv/vX.Y.Z tags, and importing plain envx never links it.
+// Load composes the checks, parse, expansion, decode and sanitization in the
+// safe order and is the default path. The package is its own Go module so
+// that importing envx never links the YAML dependency.
 package yamlenv
 
 import (

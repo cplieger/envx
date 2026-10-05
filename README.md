@@ -132,7 +132,7 @@ These are deliberate non-goals:
 
 ## Contributing
 
-Issues and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions and how to run the checks locally.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 

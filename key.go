@@ -80,8 +80,8 @@ func quoteCapped(s string, limit int) string {
 // isName reports whether k matches the environment-variable name grammar
 // this package enforces ([A-Za-z_][A-Za-z0-9_]*). Deliberately NARROWER than
 // what a kernel or POSIX tolerates (POSIX asks applications to TOLERATE odd
-// names; os.Setenv accepts "a.b" and "a b") — the fleet writes only this
-// grammar, and the narrowness is what makes a typo detectable instead of
+// names; os.Setenv accepts "a.b" and "a b") — the cplieger apps write only
+// this grammar, and the narrowness is what makes a typo detectable instead of
 // silently unset. A plain byte loop rather than a regexp — validation runs on
 // every getter call, and the grammar is ASCII-only by definition, so byte
 // inspection is exact.

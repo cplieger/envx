@@ -215,6 +215,72 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("WithLookupEnv replaces the environment for expansion and unresolved names", func(t *testing.T) {
+		t.Setenv("APP_KEY", "from-env")
+		t.Setenv("APP_ENV_ONLY", "from-env")
+		var cfg struct {
+			APIKey  string `yaml:"api_key"`
+			EnvOnly string `yaml:"env_only"`
+			Inner   string `yaml:"inner"`
+		}
+		lookup := mapLookup(map[string]string{"APP_KEY": "from-lookup", "APP_PASS": "a${APP_UNSET}"})
+		src := "api_key: ${APP_KEY}\nenv_only: ${APP_ENV_ONLY}\ninner: ${APP_PASS}\n"
+		unresolved, err := yamlenv.Load([]byte(src), &cfg, allowAppPrefix, yamlenv.WithLookupEnv(lookup))
+		if err != nil {
+			t.Fatalf("Load = %v, want nil", err)
+		}
+		if cfg.APIKey != "from-lookup" {
+			t.Errorf("APIKey = %q, want the lookup's value", cfg.APIKey)
+		}
+		if cfg.EnvOnly != "${APP_ENV_ONLY}" {
+			t.Errorf("EnvOnly = %q, want the literal reference (set only in the environment)", cfg.EnvOnly)
+		}
+		if cfg.Inner != "a${APP_UNSET}" {
+			t.Errorf("Inner = %q, want the resolved value unchanged", cfg.Inner)
+		}
+		if !slices.Equal(unresolved, []string{"APP_ENV_ONLY"}) {
+			t.Errorf("unresolved = %v, want [APP_ENV_ONLY] (APP_UNSET is inside a resolved value)", unresolved)
+		}
+	})
+
+	t.Run("the last WithLookupEnv wins", func(t *testing.T) {
+		var cfg loadConfig
+		first := yamlenv.WithLookupEnv(mapLookup(map[string]string{"APP_KEY": "first"}))
+		second := yamlenv.WithLookupEnv(mapLookup(map[string]string{"APP_KEY": "second"}))
+		unresolved, err := yamlenv.Load([]byte("api_key: ${APP_KEY}\n"), &cfg, allowAppPrefix, first, second)
+		if err != nil || unresolved != nil {
+			t.Fatalf("Load = (%v, %v), want (nil, nil)", unresolved, err)
+		}
+		if cfg.APIKey != "second" {
+			t.Errorf("APIKey = %q, want the second lookup's value", cfg.APIKey)
+		}
+	})
+
+	t.Run("WithLookupEnv(nil) keeps the process environment", func(t *testing.T) {
+		t.Setenv("APP_KEY", "from-env")
+		var cfg loadConfig
+		unresolved, err := yamlenv.Load([]byte("api_key: ${APP_KEY}\n"), &cfg, allowAppPrefix, yamlenv.WithLookupEnv(nil))
+		if err != nil || unresolved != nil {
+			t.Fatalf("Load = (%v, %v), want (nil, nil)", unresolved, err)
+		}
+		if cfg.APIKey != "from-env" {
+			t.Errorf("APIKey = %q, want the environment's value", cfg.APIKey)
+		}
+	})
+
+	t.Run("a last WithLookupEnv(nil) restores the process environment", func(t *testing.T) {
+		t.Setenv("APP_KEY", "from-env")
+		var cfg loadConfig
+		custom := yamlenv.WithLookupEnv(mapLookup(map[string]string{"APP_KEY": "from-lookup"}))
+		unresolved, err := yamlenv.Load([]byte("api_key: ${APP_KEY}\n"), &cfg, allowAppPrefix, custom, yamlenv.WithLookupEnv(nil))
+		if err != nil || unresolved != nil {
+			t.Fatalf("Load = (%v, %v), want (nil, nil)", unresolved, err)
+		}
+		if cfg.APIKey != "from-env" {
+			t.Errorf("APIKey = %q, want the environment's value (the nil option is last)", cfg.APIKey)
+		}
+	})
+
 	t.Run("out must be a non-nil pointer", func(t *testing.T) {
 		cases := []struct {
 			name string

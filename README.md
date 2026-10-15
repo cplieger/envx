@@ -4,7 +4,7 @@
 
 envx configures your Go app from environment variables and Docker secrets, with typed getters that fall back to your defaults and log a typo instead of hiding it.
 
-It replaces the `os.Getenv`, `strconv` and `KEY_FILE` code a service otherwise writes at startup. The root module depends only on [pathinside](https://github.com/cplieger/pathinside), which uses only the standard library. The optional yamlenv module adds [go-yaml](https://github.com/yaml/go-yaml) v3 for YAML config files. Both need Go 1.27.1 or later and are licensed under Apache-2.0.
+It replaces the `os.Getenv`, `strconv` and `KEY_FILE` code a service otherwise writes at startup. The root module depends only on [pathinside](https://github.com/cplieger/pathinside), which uses only the standard library. The optional yamlenv module adds [go-yaml](https://github.com/yaml/go-yaml) v3 for YAML config files. Both need Go 1.27.2 or later and are licensed under Apache-2.0.
 
 ## Why use it
 
@@ -96,7 +96,7 @@ if err != nil {
 - Strict getters that return a malformed value as an error and never log: `BoolStrict`, `IntStrict`, `DurationStrict` and `ParseError`.
 - Required values and secrets: `Require`, `Secret`, `SecretWithSource`, `IsBlankSecretFilePath`, `MissingError` and one error value for each way a secret file can fail.
 - An injected environment: `Source`, which carries the getters, the strict getters and `Require` as methods.
-- yamlenv: `Load` with its options, and the steps it runs, `Expand`, `SanitizeDecodeError`, `CheckUnknownKeys` and `CheckSingleDocument`.
+- yamlenv: `Load` with its options, and the steps it runs, `ExpandWith`, `Expand`, `SanitizeDecodeError`, `CheckUnknownKeys` and `CheckSingleDocument`.
 
 The full reference is on pkg.go.dev for [envx](https://pkg.go.dev/github.com/cplieger/envx/v2) and [yamlenv](https://pkg.go.dev/github.com/cplieger/envx/yamlenv/v2).
 

@@ -192,11 +192,9 @@ func TestExpandCannotChangeDocumentStructure(t *testing.T) {
 }
 
 func TestExpandIsSinglePass(t *testing.T) {
-	// A ${VAR} arriving FROM an expanded value is not re-expanded (no
-	// recursion). Whether its surviving literal is reported depends on
-	// set-ness: a SET variable is not "never set", so reporting it would
-	// misname it; an unset one is reported like any other unresolved
-	// allowlisted reference.
+	// A ${VAR} arriving FROM an expanded value is neither re-expanded nor
+	// reported, whether or not its name is set: it is not a reference the
+	// document holds.
 	t.Run("introduced ref naming a set variable is kept literal, not reported", func(t *testing.T) {
 		t.Setenv("APP_OUTER", "${APP_INNER}")
 		t.Setenv("APP_INNER", "never-substituted")
@@ -207,10 +205,10 @@ func TestExpandIsSinglePass(t *testing.T) {
 			t.Errorf("v = %q, want the literal ${APP_INNER} (single-pass, no recursion)", out["v"])
 		}
 		if len(unresolved) != 0 {
-			t.Errorf("unresolved = %v, want none (APP_INNER is set, only unexpanded)", unresolved)
+			t.Errorf("unresolved = %v, want none (APP_INNER is not in the document)", unresolved)
 		}
 	})
-	t.Run("introduced ref naming an unset variable is kept literal and reported", func(t *testing.T) {
+	t.Run("introduced ref naming an unset variable is kept literal, not reported", func(t *testing.T) {
 		t.Setenv("APP_OUTER", "${APP_INNER}")
 		root := parse(t, "v: ${APP_OUTER}\n")
 		unresolved := yamlenv.Expand(root, allowAppPrefix)
@@ -218,10 +216,109 @@ func TestExpandIsSinglePass(t *testing.T) {
 		if out["v"] != "${APP_INNER}" {
 			t.Errorf("v = %q, want the literal ${APP_INNER} (single-pass, no recursion)", out["v"])
 		}
-		if !slices.Equal(unresolved, []string{"APP_INNER"}) {
-			t.Errorf("unresolved = %v, want [APP_INNER]", unresolved)
+		if len(unresolved) != 0 {
+			t.Errorf("unresolved = %v, want none (APP_INNER is not in the document)", unresolved)
 		}
 	})
+}
+
+func allowAll(string) bool { return true }
+
+func mapLookup(m map[string]string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		v, ok := m[name]
+		return v, ok
+	}
+}
+
+func TestExpandWithDoesNotRescanResolvedValue(t *testing.T) {
+	t.Parallel()
+	root := parse(t, "pass: ${SUBFLUX_PASS}\nboth: ${SUBFLUX_PASS} ${SUBFLUX_MISSING}\nmissing: ${SUBFLUX_MISSING}\n")
+	unresolved := yamlenv.ExpandWith(root, allowAll, mapLookup(map[string]string{"SUBFLUX_PASS": "a${b}"}))
+	if !slices.Equal(unresolved, []string{"SUBFLUX_MISSING"}) {
+		t.Errorf("unresolved = %v, want [SUBFLUX_MISSING] (b is inside a resolved value)", unresolved)
+	}
+	out := decodeMap(t, root)
+	if out["pass"] != "a${b}" {
+		t.Errorf("pass = %q, want the resolved value a${b} unchanged", out["pass"])
+	}
+	if out["both"] != "a${b} ${SUBFLUX_MISSING}" {
+		t.Errorf("both = %q, want a${b} beside the literal ${SUBFLUX_MISSING}", out["both"])
+	}
+	if out["missing"] != "${SUBFLUX_MISSING}" {
+		t.Errorf("missing = %q, want the literal reference", out["missing"])
+	}
+}
+
+func TestExpandWithNeverLooksUpRejectedName(t *testing.T) {
+	t.Parallel()
+	var asked []string
+	lookup := func(name string) (string, bool) {
+		asked = append(asked, name)
+		return "found", true
+	}
+	root := parse(t, "allowed: ${APP_A}\nrejected: ${OTHER_SECRET}\n")
+	if got := yamlenv.ExpandWith(root, allowAppPrefix, lookup); got != nil {
+		t.Errorf("unresolved = %v, want nil", got)
+	}
+	if !slices.Equal(asked, []string{"APP_A"}) {
+		t.Errorf("lookup asked for %v, want only [APP_A] (a rejected name must never reach lookup)", asked)
+	}
+	out := decodeMap(t, root)
+	if out["allowed"] != "found" || out["rejected"] != "${OTHER_SECRET}" {
+		t.Errorf("expanded = %#v, want allowed=found and rejected kept literal", out)
+	}
+}
+
+func TestExpandWithReadsLookupOnly(t *testing.T) {
+	// Not parallel: t.Setenv proves the process environment is never read.
+	t.Setenv("SUBFLUX_X", "env")
+	t.Setenv("SUBFLUX_ENV_ONLY", "env")
+	root := parse(t, "x: ${SUBFLUX_X}\nenv_only: ${SUBFLUX_ENV_ONLY}\n")
+	unresolved := yamlenv.ExpandWith(root, allowAll, mapLookup(map[string]string{"SUBFLUX_X": "map"}))
+	out := decodeMap(t, root)
+	if out["x"] != "map" {
+		t.Errorf("x = %q, want the lookup's value map", out["x"])
+	}
+	if out["env_only"] != "${SUBFLUX_ENV_ONLY}" {
+		t.Errorf("env_only = %q, want the literal reference (set only in the environment)", out["env_only"])
+	}
+	if !slices.Equal(unresolved, []string{"SUBFLUX_ENV_ONLY"}) {
+		t.Errorf("unresolved = %v, want [SUBFLUX_ENV_ONLY]", unresolved)
+	}
+}
+
+func TestExpandWithLookupAlone(t *testing.T) {
+	t.Parallel()
+	root := parse(t, "a: ${APP_A}\nblank: ${APP_BLANK}\nother: ${OTHER_A}\n")
+	lookup := mapLookup(map[string]string{"APP_A": "one", "APP_BLANK": "", "OTHER_A": "refused"})
+	if got := yamlenv.ExpandWith(root, allowAppPrefix, lookup); got != nil {
+		t.Errorf("unresolved = %v, want nil", got)
+	}
+	out := decodeMap(t, root)
+	if out["a"] != "one" || out["blank"] != "" || out["other"] != "${OTHER_A}" {
+		t.Errorf("expanded = %#v, want a=one, blank empty, other literal (not allowed)", out)
+	}
+}
+
+// TestExpandedNodeKeepsStringTag pins the package doc's limit: an expanded
+// reference stays !!str, so it never decodes into an int field.
+func TestExpandedNodeKeepsStringTag(t *testing.T) {
+	t.Parallel()
+	root := parse(t, "port: ${APP_PORT}\n")
+	yamlenv.ExpandWith(root, allowAppPrefix, mapLookup(map[string]string{"APP_PORT": "8080"}))
+	var asInt struct {
+		Port int `yaml:"port"`
+	}
+	if err := root.Decode(&asInt); err == nil {
+		t.Errorf("Decode into int = nil error (Port %d), want a !!str type error", asInt.Port)
+	}
+	var asString struct {
+		Port string `yaml:"port"`
+	}
+	if err := root.Decode(&asString); err != nil || asString.Port != "8080" {
+		t.Errorf("Decode into string = (%q, %v), want (8080, nil)", asString.Port, err)
+	}
 }
 
 func TestExpandAnchorsExpandOnce(t *testing.T) {
@@ -246,5 +343,14 @@ func TestExpandNilInputs(t *testing.T) {
 	out := decodeMap(t, root)
 	if out["v"] != "${APP_X}" {
 		t.Errorf("nil allow rewrote the document: %#v", out)
+	}
+	if got := yamlenv.ExpandWith(nil, allowAll, mapLookup(nil)); got != nil {
+		t.Errorf("ExpandWith(nil root) = %v, want nil", got)
+	}
+	if got := yamlenv.ExpandWith(root, allowAll, nil); got != nil {
+		t.Errorf("ExpandWith(nil lookup) = %v, want nil", got)
+	}
+	if out := decodeMap(t, root); out["v"] != "${APP_X}" {
+		t.Errorf("nil lookup rewrote the document: %#v", out)
 	}
 }

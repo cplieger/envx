@@ -165,7 +165,10 @@ func TestKeyNameGrammar(t *testing.T) {
 		})
 	}
 
-	valid := []Key{"A", "a", "_", "_A", "_9", "lower_case", "APP_PORT_2", "ENVX_TEST_GRAMMAR_OK"}
+	valid := []Key{
+		"A", "a", "_", "_A", "_9", "lower_case", "APP_PORT_2", "ENVX_TEST_GRAMMAR_OK",
+		"AZaz_09", // every endpoint of the three character ranges
+	}
 	for _, k := range valid {
 		t.Run("valid/"+strconv.Quote(string(k)), func(t *testing.T) {
 			defer func() {

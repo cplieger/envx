@@ -2,6 +2,7 @@ package yamlenv
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 
@@ -54,7 +55,15 @@ type LoadOption func(*loadOptions)
 // loadOptions carries Load's policy switches.
 type loadOptions struct {
 	passthrough func(error) bool
+	lookup      func(string) (string, bool)
 	sanitize    []SanitizeOption
+}
+
+// WithLookupEnv makes Load read every ${VAR} through lookup instead of the
+// process environment, for both expansion and the unresolved names it
+// returns (ExpandWith's contract). A nil lookup keeps the process environment.
+func WithLookupEnv(lookup func(name string) (string, bool)) LoadOption {
+	return func(o *loadOptions) { o.lookup = lookup }
 }
 
 // WithSanitizeOptions forwards SanitizeOptions (e.g. WithUnknownKeyEcho(true))
@@ -91,38 +100,21 @@ func WithErrorPassthrough(pred func(error) bool) LoadOption {
 	return func(o *loadOptions) { o.passthrough = pred }
 }
 
-// Load composes the package's safe config-loading pipeline into one call:
-// single-document check and unknown-key strictness on the raw pre-expansion
-// bytes, post-parse ${VAR} expansion of string scalar values (Expand, with
-// allow as the caller's policy), the decode into out, and fail-closed error
-// sanitization — so the composition documented piecewise on the primitives
-// cannot be mis-ordered or partially applied. The primitives stay exported
-// for callers whose policy the pipeline does not fit (a deliberately
-// permissive partial probe, for example).
-//
-// out must be a non-nil pointer, typically to a struct pre-populated with the
-// caller's defaults: the decode overlays the document onto it, and an EMPTY
-// document (no YAML content) is not an error — out simply keeps its defaults.
-// The unknown-key check probes a fresh throwaway value of out's type against
-// the raw bytes; value errors in that probe (a custom UnmarshalYAML rejecting
-// a still-literal ${VAR} that expansion will satisfy, a wrong-type scalar)
-// are deliberately ignored — the post-expansion decode owns value
-// diagnostics and re-raises the genuine ones — so only unknown-key findings
-// fail the load here.
-//
-// unresolved is Expand's return, unchanged: the allowlisted names that stayed
-// unresolved, deduplicated in document order, for the caller to warn on.
-//
-// Every returned error is safe to log: ErrMultipleDocuments is static; parse,
-// unknown-key, and decode errors are rebuilt by SanitizeDecodeError (policy
-// via WithSanitizeOptions), except a decode error the caller claims through
-// WithErrorPassthrough, which is returned as-is — classified first, so a
-// failure from the config type's own UnmarshalYAML reaches the predicate (and
-// the caller) wrapped in *UnmarshalerError with its message unchanged.
+// Load runs the safe pipeline into out, a non-nil pointer holding the
+// caller's defaults: CheckSingleDocument and the unknown-key check on the raw
+// bytes, ExpandWith (allow, and WithLookupEnv's lookup), the decode, and error
+// sanitization. An empty document leaves out unchanged. The key check reports
+// only unknown keys; value errors come from the post-expansion decode.
+// unresolved is ExpandWith's return. Every error is safe to log, except a
+// decode error claimed through WithErrorPassthrough, which arrives classified
+// (*UnmarshalerError for the config type's own) and otherwise unchanged.
 func Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption) (unresolved []string, err error) {
 	var o loadOptions
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.lookup == nil {
+		o.lookup = os.LookupEnv
 	}
 	rv := reflect.ValueOf(out)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -143,7 +135,7 @@ func Load(data []byte, out any, allow func(name string) bool, opts ...LoadOption
 	if err := checkUnknownKeysFiltered(data, rv.Type().Elem(), o); err != nil {
 		return nil, err
 	}
-	unresolved = Expand(&doc, allow)
+	unresolved = ExpandWith(&doc, allow, o.lookup)
 	if err := doc.Decode(out); err != nil {
 		err = classifyDecodeError(err)
 		if o.passthrough != nil && o.passthrough(err) {

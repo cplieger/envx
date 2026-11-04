@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/envx/yamlenv/v2"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // allowAppPrefix is the allowlist most tests use: the app's own APP_* names.

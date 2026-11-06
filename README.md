@@ -1,5 +1,8 @@
 # envx
 
+> Moved to [`github.com/cplieger/go/envx`](https://github.com/cplieger/go/tree/dev/envx), and `yamlenv` to [`github.com/cplieger/go/yamlenv`](https://github.com/cplieger/go/tree/dev/yamlenv).
+> **Archived 2026-11-06. This repository is read-only. The published Go modules stay available.**
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/envx/v2.svg)](https://pkg.go.dev/github.com/cplieger/envx/v2) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/envx)](https://github.com/cplieger/envx/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/envx/badges/mutation.json)](https://github.com/cplieger/envx/issues?q=label%3Agremlins-tracker)
 
 envx configures your Go app from environment variables and Docker secrets, with typed getters that fall back to your defaults and log a typo instead of hiding it.
